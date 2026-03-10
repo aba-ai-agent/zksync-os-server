@@ -1,0 +1,219 @@
+name: Triage CI Failures
+
+on:
+  workflow_run:
+    workflows:
+      - "CI"
+      - "Docker build and release"
+      - "Release binaries"
+      - "Eth spec tests"
+      - "Security audit"
+    types: [completed]
+
+# Needed to rerun failed workflows and read job logs
+permissions:
+  actions: write
+
+jobs:
+  triage:
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch failed job logs
+        id: fetch-logs
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const run_id = context.payload.workflow_run.id;
+            const fs = require('fs');
+
+            // List all jobs for this run, find failed ones
+            const { data: { jobs } } = await github.rest.actions.listJobsForWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id,
+              filter: 'latest',
+            });
+
+            const failedJobs = jobs.filter(j => j.conclusion === 'failure');
+            const failedJobNames = failedJobs.map(j => j.name);
+            core.setOutput('failed_jobs', failedJobNames.join(', '));
+            console.log('Failed jobs:', failedJobNames);
+
+            // Download logs for each failed job (up to 3)
+            let combinedLogs = '';
+            for (const job of failedJobs.slice(0, 3)) {
+              try {
+                // This endpoint redirects to the actual log content
+                const logsResp = await github.rest.actions.downloadJobLogsForWorkflowRun({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  job_id: job.id,
+                });
+                const logText = typeof logsResp.data === 'string'
+                  ? logsResp.data
+                  : JSON.stringify(logsResp.data);
+                // Take the last 15000 chars — most relevant for failure diagnosis
+                combinedLogs += `\n=== JOB: ${job.name} ===\n${logText.slice(-15000)}\n`;
+              } catch (e) {
+                combinedLogs += `\n=== JOB: ${job.name} (logs unavailable: ${e.message}) ===\n`;
+              }
+            }
+
+            fs.writeFileSync('/tmp/failure_logs.txt', combinedLogs.slice(0, 50000));
+            console.log(`Collected ${combinedLogs.length} chars of logs`);
+
+      - name: Analyze failure with Claude
+        id: analyze
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          FAILED_JOBS: ${{ steps.fetch-logs.outputs.failed_jobs }}
+        run: |
+          python3 << 'PYEOF'
+          import os, json, urllib.request
+
+          workflow  = os.environ['WORKFLOW_NAME']
+          branch    = os.environ['BRANCH']
+          attempt   = int(os.environ['RUN_ATTEMPT'])
+          failed_jobs = os.environ.get('FAILED_JOBS', '')
+
+          with open('/tmp/failure_logs.txt', 'r', errors='replace') as f:
+              logs = f.read()
+
+          system = """You are a CI triage assistant for zksync-os-server (Rust/blockchain, Matter Labs).
+
+          Classify each failure as one of:
+          - "rerun": Clearly transient infrastructure issue — examples: network timeout, DNS failure,
+            crates.io/registry unreachable, GCS/sccache connection error, docker pull failure,
+            runner OOM, anvil/geth startup timing race, GitHub API 5xx, flaky test infra.
+          - "escalate": Needs human attention — compilation error, real test assertion failure,
+            logic bug, config error, security issue, or repeated failure (attempt >= 3).
+
+          Per-workflow guidance:
+          - "CI": Escalate on compile errors or real test failures. Rerun on Cargo network/GCS issues.
+          - "Eth spec tests": Only escalate if logs show actual EVM spec assertion failures.
+            Infra issues (anvil startup, network, GCS) → rerun.
+          - "Release binaries": Be conservative — production artifacts. Escalate unless the failure
+            is unambiguously network/infra (e.g., Foundry install timeout, crates.io 503).
+          - "Docker build and release": Rerun on registry/sccache/GCS issues, escalate on build errors.
+          - "Security audit": Escalate — a new vulnerability advisory always needs review.
+
+          If run_attempt >= 3, always return "escalate". We do not retry indefinitely.
+
+          Respond ONLY with valid JSON, no markdown:
+          {"decision": "rerun" or "escalate", "reason": "<one concise sentence>", "failure_type": "<short label>"}
+          """
+
+          user_msg = f"""Workflow: {workflow}
+          Branch: {branch}
+          Run attempt: {attempt}
+          Failed jobs: {failed_jobs}
+
+          Logs (truncated):
+          {logs}"""
+
+          payload = {
+              "model": "claude-sonnet-4-6",
+              "max_tokens": 300,
+              "system": system,
+              "messages": [{"role": "user", "content": user_msg}],
+          }
+
+          req = urllib.request.Request(
+              "https://api.anthropic.com/v1/messages",
+              data=json.dumps(payload).encode(),
+              headers={
+                  "x-api-key": os.environ['ANTHROPIC_API_KEY'],
+                  "anthropic-version": "2023-06-01",
+                  "content-type": "application/json",
+              },
+          )
+
+          try:
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  result   = json.loads(resp.read())
+                  raw_text = result['content'][0]['text'].strip()
+                  # Strip markdown code fences if Claude wraps the JSON
+                  if raw_text.startswith('```'):
+                      raw_text = raw_text.split('```')[1]
+                      if raw_text.startswith('json'):
+                          raw_text = raw_text[4:]
+                  analysis = json.loads(raw_text.strip())
+          except Exception as e:
+              print(f"Claude API error: {e}")
+              analysis = {
+                  "decision": "escalate",
+                  "reason": f"Could not analyze logs (API error: {e})",
+                  "failure_type": "analysis_error",
+              }
+
+          # Hard rule: no more reruns after attempt 3
+          if attempt >= 3:
+              analysis['decision'] = 'escalate'
+              analysis['reason'] = f"Attempt {attempt}: " + analysis.get('reason', '')
+
+          print(f"Decision: {json.dumps(analysis, indent=2)}")
+
+          # Write outputs — sanitize reason to a single line
+          reason = analysis.get('reason', '').replace('\n', ' ').replace('\r', '')
+          failure_type = analysis.get('failure_type', 'unknown').replace('\n', ' ')
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"decision={analysis['decision']}\n")
+              f.write(f"reason={reason}\n")
+              f.write(f"failure_type={failure_type}\n")
+          PYEOF
+
+      - name: Re-run failed jobs (transient failure)
+        if: steps.analyze.outputs.decision == 'rerun'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const run_id = context.payload.workflow_run.id;
+            console.log(`Rerunning failed jobs for run ${run_id}`);
+            console.log(`Reason: ${{ steps.analyze.outputs.reason }}`);
+            await github.rest.actions.reRunWorkflowFailedJobs({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id,
+            });
+            console.log('Rerun triggered successfully');
+
+      - name: Notify Slack (real failure requires attention)
+        if: steps.analyze.outputs.decision == 'escalate'
+        uses: slackapi/slack-github-action@91efab103c0de0a537f72a35f6b8cda0ee76bf0a # v2.1.1
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_RELEASES }}
+          webhook-type: incoming-webhook
+          payload: |
+            blocks:
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "*:rotating_light: CI Failure: ${{ github.event.workflow_run.name }}*"
+              - type: "section"
+                fields:
+                  - type: "mrkdwn"
+                    text: "*Repository:*\n`${{ github.repository }}`"
+                  - type: "mrkdwn"
+                    text: "*Branch:*\n`${{ github.event.workflow_run.head_branch }}`"
+                  - type: "mrkdwn"
+                    text: "*Failed Jobs:*\n`${{ steps.fetch-logs.outputs.failed_jobs }}`"
+                  - type: "mrkdwn"
+                    text: "*Attempt:*\n${{ github.event.workflow_run.run_attempt }}"
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "*Analysis:* ${{ steps.analyze.outputs.reason }}"
+              - type: "actions"
+                elements:
+                  - type: "button"
+                    text:
+                      type: "plain_text"
+                      text: "View Failed Run"
+                      emoji: true
+                    url: "${{ github.event.workflow_run.html_url }}"
+                    style: "danger"

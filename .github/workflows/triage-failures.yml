@@ -44,7 +44,6 @@ jobs:
             let combinedLogs = '';
             for (const job of failedJobs.slice(0, 3)) {
               try {
-                // This endpoint redirects to the actual log content
                 const logsResp = await github.rest.actions.downloadJobLogsForWorkflowRun({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
@@ -65,116 +64,76 @@ jobs:
 
       - name: Analyze failure with Claude
         id: analyze
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            Analyze the CI failure for zksync-os-server (Rust/blockchain project, Matter Labs).
+
+            Context:
+            - Workflow: ${{ github.event.workflow_run.name }}
+            - Branch: ${{ github.event.workflow_run.head_branch }}
+            - Run attempt: ${{ github.event.workflow_run.run_attempt }}
+            - Failed jobs: ${{ steps.fetch-logs.outputs.failed_jobs }}
+
+            Read /tmp/failure_logs.txt and classify the failure as one of:
+            - "rerun": Transient infra issue — network timeout, DNS failure, crates.io/registry
+              unreachable, GCS/sccache error, docker pull failure, runner OOM, anvil/geth
+              startup timing race, GitHub API 5xx, flaky test infrastructure.
+            - "escalate": Needs human attention — compilation error, real test assertion failure,
+              logic bug, config error, security issue.
+
+            Per-workflow guidance:
+            - "CI": Escalate compile/test failures. Rerun Cargo network/GCS issues.
+            - "Eth spec tests": Only escalate actual EVM spec assertion failures. Infra → rerun.
+            - "Release binaries": Conservative — escalate unless unambiguously network/infra.
+            - "Docker build and release": Rerun registry/sccache/GCS issues, escalate build errors.
+            - "Security audit": Always escalate — a new advisory always needs review.
+
+            If run_attempt >= 3, always return "escalate".
+
+            Return a JSON object with: decision ("rerun" or "escalate"), reason (one sentence),
+            failure_type (short label e.g. "network_timeout", "compile_error", "flaky_infra").
+          claude_args: |
+            --allowedTools Bash
+            --max-turns 3
+            --json-schema '{"type":"object","properties":{"decision":{"type":"string","enum":["rerun","escalate"]},"reason":{"type":"string"},"failure_type":{"type":"string"}},"required":["decision","reason","failure_type"]}'
+
+      - name: Extract decision
+        id: result
+        if: always()
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
-          BRANCH: ${{ github.event.workflow_run.head_branch }}
-          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-          FAILED_JOBS: ${{ steps.fetch-logs.outputs.failed_jobs }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          RAW: ${{ steps.analyze.outputs.structured_output }}
         run: |
-          python3 << 'PYEOF'
-          import os, json, urllib.request
-
-          workflow  = os.environ['WORKFLOW_NAME']
-          branch    = os.environ['BRANCH']
-          attempt   = int(os.environ['RUN_ATTEMPT'])
-          failed_jobs = os.environ.get('FAILED_JOBS', '')
-
-          with open('/tmp/failure_logs.txt', 'r', errors='replace') as f:
-              logs = f.read()
-
-          system = """You are a CI triage assistant for zksync-os-server (Rust/blockchain, Matter Labs).
-
-          Classify each failure as one of:
-          - "rerun": Clearly transient infrastructure issue — examples: network timeout, DNS failure,
-            crates.io/registry unreachable, GCS/sccache connection error, docker pull failure,
-            runner OOM, anvil/geth startup timing race, GitHub API 5xx, flaky test infra.
-          - "escalate": Needs human attention — compilation error, real test assertion failure,
-            logic bug, config error, security issue, or repeated failure (attempt >= 3).
-
-          Per-workflow guidance:
-          - "CI": Escalate on compile errors or real test failures. Rerun on Cargo network/GCS issues.
-          - "Eth spec tests": Only escalate if logs show actual EVM spec assertion failures.
-            Infra issues (anvil startup, network, GCS) → rerun.
-          - "Release binaries": Be conservative — production artifacts. Escalate unless the failure
-            is unambiguously network/infra (e.g., Foundry install timeout, crates.io 503).
-          - "Docker build and release": Rerun on registry/sccache/GCS issues, escalate on build errors.
-          - "Security audit": Escalate — a new vulnerability advisory always needs review.
-
-          If run_attempt >= 3, always return "escalate". We do not retry indefinitely.
-
-          Respond ONLY with valid JSON, no markdown:
-          {"decision": "rerun" or "escalate", "reason": "<one concise sentence>", "failure_type": "<short label>"}
-          """
-
-          user_msg = f"""Workflow: {workflow}
-          Branch: {branch}
-          Run attempt: {attempt}
-          Failed jobs: {failed_jobs}
-
-          Logs (truncated):
-          {logs}"""
-
-          payload = {
-              "model": "claude-sonnet-4-6",
-              "max_tokens": 300,
-              "system": system,
-              "messages": [{"role": "user", "content": user_msg}],
-          }
-
-          req = urllib.request.Request(
-              "https://api.anthropic.com/v1/messages",
-              data=json.dumps(payload).encode(),
-              headers={
-                  "x-api-key": os.environ['ANTHROPIC_API_KEY'],
-                  "anthropic-version": "2023-06-01",
-                  "content-type": "application/json",
-              },
-          )
-
-          try:
-              with urllib.request.urlopen(req, timeout=30) as resp:
-                  result   = json.loads(resp.read())
-                  raw_text = result['content'][0]['text'].strip()
-                  # Strip markdown code fences if Claude wraps the JSON
-                  if raw_text.startswith('```'):
-                      raw_text = raw_text.split('```')[1]
-                      if raw_text.startswith('json'):
-                          raw_text = raw_text[4:]
-                  analysis = json.loads(raw_text.strip())
-          except Exception as e:
-              print(f"Claude API error: {e}")
-              analysis = {
-                  "decision": "escalate",
-                  "reason": f"Could not analyze logs (API error: {e})",
-                  "failure_type": "analysis_error",
-              }
-
-          # Hard rule: no more reruns after attempt 3
-          if attempt >= 3:
-              analysis['decision'] = 'escalate'
-              analysis['reason'] = f"Attempt {attempt}: " + analysis.get('reason', '')
-
-          print(f"Decision: {json.dumps(analysis, indent=2)}")
-
-          # Write outputs — sanitize reason to a single line
-          reason = analysis.get('reason', '').replace('\n', ' ').replace('\r', '')
-          failure_type = analysis.get('failure_type', 'unknown').replace('\n', ' ')
-
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write(f"decision={analysis['decision']}\n")
-              f.write(f"reason={reason}\n")
-              f.write(f"failure_type={failure_type}\n")
-          PYEOF
+          if [ "${ATTEMPT}" -ge "3" ]; then
+            echo "decision=escalate" >> "$GITHUB_OUTPUT"
+            echo "reason=Attempt ${ATTEMPT}: max retries reached, escalating regardless of cause" >> "$GITHUB_OUTPUT"
+            echo "failure_type=max_retries" >> "$GITHUB_OUTPUT"
+          elif [ -z "${RAW}" ]; then
+            echo "decision=escalate" >> "$GITHUB_OUTPUT"
+            echo "reason=Could not analyze logs (analysis step produced no output)" >> "$GITHUB_OUTPUT"
+            echo "failure_type=analysis_error" >> "$GITHUB_OUTPUT"
+          else
+            python3 - <<'PYEOF'
+import json, os
+d = json.loads(os.environ['RAW'])
+with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+    f.write('decision=' + d['decision'] + '\n')
+    f.write('reason=' + d.get('reason', '').replace('\n', ' ') + '\n')
+    f.write('failure_type=' + d.get('failure_type', 'unknown').replace('\n', ' ') + '\n')
+PYEOF
+          fi
 
       - name: Re-run failed jobs (transient failure)
-        if: steps.analyze.outputs.decision == 'rerun'
+        if: steps.result.outputs.decision == 'rerun'
         uses: actions/github-script@v7
         with:
           script: |
             const run_id = context.payload.workflow_run.id;
             console.log(`Rerunning failed jobs for run ${run_id}`);
-            console.log(`Reason: ${{ steps.analyze.outputs.reason }}`);
+            console.log(`Reason: ${{ steps.result.outputs.reason }}`);
             await github.rest.actions.reRunWorkflowFailedJobs({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -183,7 +142,7 @@ jobs:
             console.log('Rerun triggered successfully');
 
       - name: Notify Slack (real failure requires attention)
-        if: steps.analyze.outputs.decision == 'escalate'
+        if: steps.result.outputs.decision == 'escalate'
         uses: slackapi/slack-github-action@91efab103c0de0a537f72a35f6b8cda0ee76bf0a # v2.1.1
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_RELEASES }}
@@ -207,7 +166,7 @@ jobs:
               - type: "section"
                 text:
                   type: "mrkdwn"
-                  text: "*Analysis:* ${{ steps.analyze.outputs.reason }}"
+                  text: "*Analysis:* ${{ steps.result.outputs.reason }}"
               - type: "actions"
                 elements:
                   - type: "button"

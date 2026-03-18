@@ -67,9 +67,7 @@ L1Sender(Exec) ──watch::Sender<ComponentHealth>──┘         │
 
 Every pipeline component — including `BlockExecutor` — holds only a `ComponentHealthReporter` and hands its `watch::Receiver<ComponentHealth>` to the monitor at wiring time. No component is special-cased.
 
-The monitor is the sole writer to `watch::Sender<TransactionAcceptanceState>`. No component writes to the acceptance state channel directly.
-
-`max_blocks_to_produce` is expressed as a condition in `PipelineHealthConfig` rather than as a halt in `BlockExecutor`. The `check_block_production_limit` call and the corresponding `watch::Sender<TransactionAcceptanceState>` are removed from `BlockExecutor` entirely.
+The monitor is the sole writer to `watch::Sender<TransactionAcceptanceState>` for backpressure conditions. `BlockExecutor` retains its own `watch::Sender<TransactionAcceptanceState>` exclusively for `BlockProductionDisabled` — an unrelated operational mechanism (`max_blocks_to_produce`) that hard-halts block production via `pending()` and is out of scope for this design.
 
 ---
 
@@ -190,12 +188,6 @@ pub struct PipelineHealthConfig {
     /// How often the monitor re-evaluates all conditions.
     pub eval_interval: Duration,
 
-    /// When set, stop accepting transactions once BlockExecutor has processed
-    /// this many blocks. Replaces the check_block_production_limit halt that
-    /// previously lived inside BlockExecutor. BlockExecutor continues running
-    /// (producing empty blocks) but no user transactions are accepted.
-    pub max_blocks_to_produce: Option<u64>,
-
     // Both pipelines
     pub block_executor:           BackpressureCondition,
     pub block_applier:            BackpressureCondition,
@@ -221,7 +213,6 @@ impl Default for PipelineHealthConfig {
     fn default() -> Self {
         Self {
             eval_interval: Duration::from_secs(1), // explicit: Duration::default() is zero
-            max_blocks_to_produce: None,
             block_executor:           BackpressureCondition::default(),
             block_applier:            BackpressureCondition::default(),
             // ... all fields BackpressureCondition::default()
@@ -404,7 +395,7 @@ fn evaluate_and_update(&self) {
     // Emit Prometheus gauges on every tick, independent of acceptance state changes.
     self.emit_metrics(&active_causes, head_seq);
 
-    let new_state = self.compute_acceptance_state(active_causes, head_seq);
+    let new_state = self.compute_acceptance_state(active_causes);
 
     // send_if_modified: only wakes RPC watchers when acceptance state actually changes.
     self.acceptance_tx.send_if_modified(|current| {
@@ -425,17 +416,7 @@ fn evaluate_and_update(&self) {
 fn compute_acceptance_state(
     &self,
     active_causes: Vec<BackpressureCause>,
-    head_seq: u64,
 ) -> TransactionAcceptanceState {
-    // Block production limit takes precedence over per-component backpressure.
-    // Evaluated directly from BlockExecutor's last_processed_seq — no separate channel needed.
-    if let Some(limit) = self.config.max_blocks_to_produce {
-        if head_seq >= limit {
-            return TransactionAcceptanceState::NotAccepting(
-                NotAcceptingReason::BlockProductionDisabled,
-            );
-        }
-    }
     if active_causes.is_empty() {
         TransactionAcceptanceState::Accepting
     } else {
@@ -590,7 +571,7 @@ async fn send_raw_transaction_impl(&self, tx: Bytes) -> Result<H256, EthSendRawT
 }
 ```
 
-`BlockExecutor` no longer holds a `watch::Sender<TransactionAcceptanceState>` or any other special channel. It holds only a `ComponentHealthReporter`, the same as every other component. The `check_block_production_limit` halt is removed from `BlockExecutor`. The monitor evaluates `max_blocks_to_produce` directly from `block_executor.last_processed_seq`.
+`BlockExecutor` retains its existing `watch::Sender<TransactionAcceptanceState>` for `BlockProductionDisabled` — that mechanism is unchanged. The only change to `BlockExecutor` in this design is replacing `ComponentStateReporter` with `ComponentHealthReporter`.
 
 ### Error format
 
@@ -674,8 +655,7 @@ Test `evaluate()` directly with constructed `ComponentHealth` values. No server 
  9. Two components with active causes → both in acceptance state
 10. One cause clears → other remains → still NotAccepting
 11. All causes clear → Accepting
-12. block_production_disabled=true → BlockProductionDisabled, overrides backpressure causes
-13. Lag metrics emit 0 for WaitingRecv components, non-zero for WaitingSend
+12. Lag metrics emit 0 for WaitingRecv components, non-zero for WaitingSend
 ```
 
 ### Integration test — end-to-end RPC rejection and recovery
@@ -738,8 +718,8 @@ async fn backpressure_stops_and_resumes_transaction_acceptance() {
 | Component | Before | After |
 |---|---|---|
 | Each pipeline component | `ComponentStateReporter` + background task | `ComponentHealthReporter` (watch-based, no background task) |
-| `BlockExecutor` | Holds `watch::Sender<TransactionAcceptanceState>`, calls `check_block_production_limit` | Holds `ComponentHealthReporter` only — same as every other component |
+| `BlockExecutor` | Holds `watch::Sender<TransactionAcceptanceState>` + `ComponentStateReporter` | Holds `watch::Sender<TransactionAcceptanceState>` (unchanged) + `ComponentHealthReporter` (replaces `ComponentStateReporter`) |
 | `TxHandler` | Two sequential acceptance checks | One check, one channel |
 | `BackpressureHandle` (branch) | Global singleton, `OnceLock` | Removed entirely |
 | Acceptance state sender | Owned by `BlockExecutor` | Owned by `PipelineHealthMonitor` |
-| New: `PipelineHealthMonitor` | — | Spawned as pipeline task; all receivers registered at wiring time; evaluates `max_blocks_to_produce` from `block_executor.last_processed_seq`; participates in the node's stop signal |
+| New: `PipelineHealthMonitor` | — | Spawned as pipeline task; all receivers registered at wiring time; participates in the node's stop signal |

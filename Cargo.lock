@@ -14442,6 +14442,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "zksync_os_pipeline_health"
+version = "0.1.0"
+dependencies = [
+ "smart-config",
+ "tokio",
+ "tracing",
+ "vise",
+ "zksync_os_observability",
+ "zksync_os_types",
+]
+
+[[package]]
 name = "zksync_os_priority_tree"
 version = "0.17.1"
 dependencies = [
@@ -14464,7 +14476,7 @@ dependencies = [
 
 [[package]]
 name = "zksync_os_raft"
-version = "0.16.0"
+version = "0.17.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -14752,6 +14764,7 @@ dependencies = [
  "zksync_os_observability",
  "zksync_os_operator_signer",
  "zksync_os_pipeline",
+ "zksync_os_pipeline_health",
  "zksync_os_priority_tree",
  "zksync_os_raft",
  "zksync_os_reth_compat",

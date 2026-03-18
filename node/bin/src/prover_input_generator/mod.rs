@@ -26,6 +26,7 @@ pub struct ProverInputGenerator<ReadState> {
     pub app_bin_base_path: PathBuf,
     pub read_state: ReadState,
     pub pubdata_mode: PubdataMode,
+    pub health_reporter: ComponentHealthReporter,
 }
 
 #[async_trait]
@@ -45,7 +46,7 @@ impl<ReadState: ReadStateHistory + Clone + Send + 'static> PipelineComponent
         input: PeekableReceiver<Self::Input>,
         output: mpsc::Sender<Self::Output>,
     ) -> Result<()> {
-        let (health_reporter, _rx) = ComponentHealthReporter::new("prover_input_generator");
+        let health_reporter = self.health_reporter;
         health_reporter.enter_state(GenericComponentState::ProcessingOrWaitingRecv);
 
         let read_state = self.read_state;

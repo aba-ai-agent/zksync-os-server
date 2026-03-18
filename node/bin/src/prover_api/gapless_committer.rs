@@ -23,6 +23,7 @@ pub struct GaplessCommitter {
     pub last_committed_batch_number: u64,
     pub proof_storage: ProofStorage,
     pub batch_verification_l1_config: BatchVerificationSL,
+    pub health_reporter: ComponentHealthReporter,
 }
 
 #[async_trait]
@@ -38,7 +39,7 @@ impl PipelineComponent for GaplessCommitter {
         mut input: PeekableReceiver<Self::Input>,
         output: mpsc::Sender<Self::Output>,
     ) -> anyhow::Result<()> {
-        let (health_reporter, _rx) = ComponentHealthReporter::new("gapless_committer");
+        let health_reporter = self.health_reporter;
 
         let mut buffer: BTreeMap<u64, SignedBatchEnvelope<FriProof>> = BTreeMap::new();
         let mut next_expected_batch_number = self.next_expected_batch_number;

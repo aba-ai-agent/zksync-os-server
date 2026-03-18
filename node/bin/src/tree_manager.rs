@@ -16,9 +16,9 @@ use zksync_os_observability::{ComponentHealthReporter, GenericComponentState};
 use zksync_os_pipeline::{PeekableReceiver, PipelineComponent};
 use zksync_os_rocksdb::{RocksDB, RocksDBOptions, StalledWritesRetries};
 
-#[derive(Debug)]
 pub(crate) struct TreeManager {
     pub tree: MerkleTree<RocksDBWrapper>,
+    pub health_reporter: ComponentHealthReporter,
 }
 
 #[async_trait]
@@ -38,12 +38,11 @@ impl PipelineComponent for TreeManager {
         output: mpsc::Sender<Self::Output>,
     ) -> anyhow::Result<()> {
         let tree = self.tree;
+        let health_reporter = self.health_reporter;
 
         // only used to skip blocks that were already processed by the tree -
         // will be removed once idempotency is handled on the framework level
         let mut last_processed_block = tree.latest_version()?.expect("tree wasn't initialized");
-
-        let (health_reporter, _rx) = ComponentHealthReporter::new("tree");
         loop {
             health_reporter.enter_state(GenericComponentState::WaitingRecv);
 

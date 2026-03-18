@@ -34,6 +34,7 @@ pub struct BatchVerificationPipelineStep<E> {
     validators: Vec<Address>,
     last_committed_batch_number: u64,
     l1_state: L1State,
+    pub health_reporter: ComponentHealthReporter,
     _phantom: std::marker::PhantomData<E>,
 }
 
@@ -42,6 +43,7 @@ impl<E> BatchVerificationPipelineStep<E> {
         config: BatchVerificationConfig,
         l1_state: L1State,
         last_committed_batch_number: u64,
+        health_reporter: ComponentHealthReporter,
     ) -> Self {
         let config_validators = config
             .accepted_signers
@@ -70,6 +72,7 @@ impl<E> BatchVerificationPipelineStep<E> {
             validators,
             last_committed_batch_number,
             l1_state,
+            health_reporter,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -111,7 +114,35 @@ impl<E: Send + Sync + 'static> PipelineComponent for BatchVerificationPipelineSt
                     .boxed()
                     .map(report_exit("Batch response processor"));
 
-            let verifier = BatchVerifier::new(&self, response_channels, server);
+            // Destructure to get health_reporter by value while passing &self to BatchVerifier::new
+            // (avoiding partial move conflict by using struct literal construction)
+            let BatchVerificationPipelineStep {
+                config,
+                threshold,
+                validators,
+                last_committed_batch_number,
+                l1_state,
+                health_reporter,
+                _phantom,
+            } = self;
+
+            BATCH_VERIFICATION_SEQUENCER_METRICS.threshold.set(threshold);
+            BATCH_VERIFICATION_SEQUENCER_METRICS
+                .validators_count
+                .set(validators.len());
+
+            let verifier = BatchVerifier {
+                config,
+                accepted_signers: validators,
+                threshold,
+                request_id_counter: AtomicU64::new(1),
+                response_channels,
+                server,
+                l1_chain_id: l1_state.sl_chain_id,
+                multisig_committer: l1_state.validator_timelock_sl,
+                last_committed_batch_number,
+                health_reporter,
+            };
             let verifier_fut = verifier
                 .run(input, output)
                 .boxed()
@@ -178,6 +209,7 @@ struct BatchVerifier {
     l1_chain_id: u64,
     multisig_committer: Address,
     last_committed_batch_number: u64,
+    health_reporter: ComponentHealthReporter,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -210,37 +242,12 @@ impl BatchVerificationError {
 }
 
 impl BatchVerifier {
-    pub fn new<E>(
-        component: &BatchVerificationPipelineStep<E>,
-        response_channels: ResponseChannelsMapArc,
-        server: Arc<BatchVerificationServer>,
-    ) -> Self {
-        BATCH_VERIFICATION_SEQUENCER_METRICS
-            .threshold
-            .set(component.threshold);
-        BATCH_VERIFICATION_SEQUENCER_METRICS
-            .validators_count
-            .set(component.validators.len());
-
-        Self {
-            config: component.config.clone(),
-            accepted_signers: component.validators.clone(),
-            threshold: component.threshold,
-            request_id_counter: AtomicU64::new(1),
-            response_channels,
-            server,
-            l1_chain_id: component.l1_state.sl_chain_id,
-            multisig_committer: component.l1_state.validator_timelock_sl,
-            last_committed_batch_number: component.last_committed_batch_number,
-        }
-    }
-
     async fn run<E: Send + Sync>(
         &self,
         mut batch_for_signing_receiver: PeekableReceiver<BatchForSigning<E>>,
         singed_batcher_sender: Sender<SignedBatchEnvelope<E>>,
     ) -> anyhow::Result<()> {
-        let (health_reporter, _rx) = ComponentHealthReporter::new("batch_verifier");
+        let health_reporter = &self.health_reporter;
         let metrics = &*BATCH_VERIFICATION_SEQUENCER_METRICS;
 
         loop {
@@ -567,6 +574,7 @@ mod tests {
             .map(|s| s.parse().unwrap())
             .collect();
         let threshold = config.threshold;
+        let (health_reporter, _rx) = ComponentHealthReporter::new("batch_verifier");
         let verifier = BatchVerifier {
             config,
             accepted_signers: accepted_signers_addrs,
@@ -577,6 +585,7 @@ mod tests {
             multisig_committer: MULTISIG_COMMITTER_DUMMY.parse().unwrap(),
             last_committed_batch_number,
             request_id_counter: AtomicU64::new(1),
+            health_reporter,
         };
         (verifier, response_channels)
     }

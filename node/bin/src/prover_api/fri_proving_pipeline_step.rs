@@ -32,13 +32,12 @@ impl FriProvingPipelineStep {
         last_proved_batch_number: u64,
         assignment_timeout: Duration,
         max_assigned_batch_range: usize,
+        fri_health_reporter: ComponentHealthReporter,
     ) -> (Self, Arc<FriJobManager>) {
         // Create channel for completed proofs - between FriProveManager and GaplessCommitter
         let (batches_with_proof_sender, batches_with_proof_receiver) =
             mpsc::channel::<SignedBatchEnvelope<FriProof>>(5);
 
-        // Temporary placeholder - Task 8 will wire this properly
-        let (fri_health_reporter, _rx) = ComponentHealthReporter::new("fri_job_manager");
         let fri_job_manager = Arc::new(FriJobManager::new(
             batches_with_proof_sender,
             proof_storage,

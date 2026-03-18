@@ -72,8 +72,8 @@ pub async fn run_l1_sender<Input: SendToL1>(
     >,
     config: L1SenderConfig<Input>,
     gateway: bool,
+    health_reporter: ComponentHealthReporter,
 ) -> anyhow::Result<()> {
-    let (health_reporter, _rx) = ComponentHealthReporter::new(Input::NAME);
     let command_name = Input::NAME;
 
     let operator_address =

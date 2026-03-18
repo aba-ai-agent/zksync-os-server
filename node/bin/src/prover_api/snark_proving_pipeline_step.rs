@@ -32,11 +32,10 @@ impl SnarkProvingPipelineStep {
         last_proved_batch_number: u64,
         assignment_timeout: Duration,
         max_assigned_batch_range: usize,
+        snark_health_reporter: ComponentHealthReporter,
     ) -> (Self, Arc<SnarkJobManager>) {
         let (proof_commands_sender, proof_commands_receiver) = mpsc::channel::<ProofCommand>(1);
 
-        // Temporary placeholder - Task 8 will wire this properly
-        let (snark_health_reporter, _rx) = ComponentHealthReporter::new("snark_job_manager");
         let snark_job_manager = Arc::new(SnarkJobManager::new(
             proof_commands_sender,
             max_fris_per_snark,

@@ -10,12 +10,14 @@ use zksync_os_pipeline::{PeekableReceiver, PipelineComponent};
 /// Fixes the order and sends downstream.
 pub struct GaplessL1ProofSender {
     pub next_expected_batch_number: u64,
+    pub health_reporter: ComponentHealthReporter,
 }
 
 impl GaplessL1ProofSender {
-    pub fn new(next_expected_batch_number: u64) -> Self {
+    pub fn new(next_expected_batch_number: u64, health_reporter: ComponentHealthReporter) -> Self {
         Self {
             next_expected_batch_number,
+            health_reporter,
         }
     }
 }
@@ -33,7 +35,7 @@ impl PipelineComponent for GaplessL1ProofSender {
         mut input: PeekableReceiver<Self::Input>,
         output: mpsc::Sender<Self::Output>,
     ) -> anyhow::Result<()> {
-        let (health_reporter, _rx) = ComponentHealthReporter::new("gapless_l1_proof_sender");
+        let health_reporter = self.health_reporter;
 
         let mut buffer: BTreeMap<u64, L1SenderCommand<ProofCommand>> = BTreeMap::new();
         let mut next_expected_batch_number = self.next_expected_batch_number;

@@ -51,6 +51,7 @@ pub struct Batcher<ReadState> {
     pub sidecar_sender: mpsc::Sender<BlobTransactionSidecar>,
     pub committed_batch_provider: CommittedBatchProvider,
     pub read_state: ReadState,
+    pub health_reporter: ComponentHealthReporter,
 }
 
 #[async_trait]
@@ -71,8 +72,6 @@ impl<ReadState: ReadStateHistory + Clone + Send + 'static> PipelineComponent
         mut input: PeekableReceiver<Self::Input>,
         output: mpsc::Sender<Self::Output>,
     ) -> anyhow::Result<()> {
-        let (health_reporter, _rx) = ComponentHealthReporter::new("batcher");
-
         // We use last executed batch as the starting point. Next immediate batch we process will be
         // `last_executed_batch + 1`.
         let last_executed_batch = self
@@ -111,14 +110,14 @@ impl<ReadState: ReadStateHistory + Clone + Send + 'static> PipelineComponent
         let mut last_created_batch_at: Option<Instant> = None;
 
         loop {
-            health_reporter.enter_state(GenericComponentState::WaitingRecv);
+            self.health_reporter.enter_state(GenericComponentState::WaitingRecv);
 
             // Peek at the next block to decide whether to recreate or create anew.
             let next_block_number = input
                 .peek_recv(|(_, replay_record, _, _)| replay_record.block_context.block_number)
                 .await
                 .context("batcher inbound channel unexpectedly closed")?;
-            health_reporter.enter_state(GenericComponentState::Processing);
+            self.health_reporter.enter_state(GenericComponentState::Processing);
 
             let batch_envelope;
             let recreated;
@@ -143,7 +142,6 @@ impl<ReadState: ReadStateHistory + Clone + Send + 'static> PipelineComponent
                 batch_envelope = self
                     .recreate_existing_batch(
                         &mut input,
-                        &health_reporter,
                         &prev_batch_info,
                         committed_batch,
                     )
@@ -151,7 +149,7 @@ impl<ReadState: ReadStateHistory + Clone + Send + 'static> PipelineComponent
                 recreated = true;
             } else {
                 batch_envelope = self
-                    .create_batch(&mut input, &health_reporter, &prev_batch_info)
+                    .create_batch(&mut input, &prev_batch_info)
                     .await?;
                 recreated = false;
             };
@@ -192,7 +190,7 @@ impl<ReadState: ReadStateHistory + Clone + Send + 'static> PipelineComponent
                 "Batch da_input",
             );
 
-            health_reporter.enter_state(GenericComponentState::WaitingSend);
+            self.health_reporter.enter_state(GenericComponentState::WaitingSend);
             if let Some(sidecar) = batch_envelope.batch.batch_info.blob_sidecar.clone() {
                 self.sidecar_sender
                     .send(sidecar)
@@ -204,7 +202,7 @@ impl<ReadState: ReadStateHistory + Clone + Send + 'static> PipelineComponent
                 .send(batch_envelope)
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to send batch data: {e}"))?;
-            health_reporter.record_processed(last_block_number);
+            self.health_reporter.record_processed(last_block_number);
         }
     }
 }
@@ -218,7 +216,6 @@ impl<ReadState: ReadStateHistory + Clone + Send + 'static> Batcher<ReadState> {
             ProverInput,
             BlockMerkleTreeData,
         )>,
-        health_reporter: &ComponentHealthReporter,
         prev_batch_info: &StoredBatchInfo,
     ) -> anyhow::Result<BatchForSigning<ProverInput>> {
         // will be set to `Some` when we process the first block that the batch can be sealed after
@@ -234,7 +231,7 @@ impl<ReadState: ReadStateHistory + Clone + Send + 'static> Batcher<ReadState> {
         );
 
         loop {
-            health_reporter.enter_state(GenericComponentState::WaitingRecv);
+            self.health_reporter.enter_state(GenericComponentState::WaitingRecv);
             tokio::select! {
                 /* ---------- check for timeout ---------- */
                 _ = async {
@@ -252,7 +249,7 @@ impl<ReadState: ReadStateHistory + Clone + Send + 'static> Batcher<ReadState> {
                     // determine if the block fits into the current batch
                     accumulator.clone().add(block_output, replay_record).should_seal()
                 }) => {
-                    health_reporter.enter_state(GenericComponentState::Processing);
+                    self.health_reporter.enter_state(GenericComponentState::Processing);
                     match should_seal {
                         Some(true) => {
                             // some of the limits was reached, start sealing the batch
@@ -340,7 +337,6 @@ impl<ReadState: ReadStateHistory + Clone + Send + 'static> Batcher<ReadState> {
             ProverInput,
             BlockMerkleTreeData,
         )>,
-        health_reporter: &ComponentHealthReporter,
         prev_batch_info: &StoredBatchInfo,
         existing_batch: DiscoveredCommittedBatch,
     ) -> anyhow::Result<BatchForSigning<ProverInput>> {
@@ -358,12 +354,12 @@ impl<ReadState: ReadStateHistory + Clone + Send + 'static> Batcher<ReadState> {
         let expected_block_count = existing_batch.block_count();
         // Collect all blocks in this batch
         while blocks.len() < expected_block_count as usize {
-            health_reporter.enter_state(GenericComponentState::WaitingRecv);
+            self.health_reporter.enter_state(GenericComponentState::WaitingRecv);
             let (block_output, replay_record, prover_input, tree) = block_receiver
                 .recv()
                 .await
                 .context("channel closed while recreating batch")?;
-            health_reporter.enter_state(GenericComponentState::Processing);
+            self.health_reporter.enter_state(GenericComponentState::Processing);
 
             let (root_hash, leaf_count) = tree.block_end.root_info()?;
             let tree_output = TreeBatchOutput {

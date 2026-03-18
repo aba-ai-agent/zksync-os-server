@@ -14,6 +14,7 @@ pub struct ComponentHealth {
 
 /// Replaces `ComponentStateReporter`.
 /// Uses `watch::Sender` — updates are infallible, no background task, no global state.
+#[derive(Debug)]
 pub struct ComponentHealthReporter {
     sender: watch::Sender<ComponentHealth>,
     component: &'static str,

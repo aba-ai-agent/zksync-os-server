@@ -950,12 +950,22 @@ async fn run_main_node_pipeline(
         .pipe(BlockCanonizer {
             consensus: canonization_engine,
             canonized_blocks_for_execution: replays_to_execute_sender,
+            // Temporary placeholder - Task 8 will wire this properly
+            health_reporter: zksync_os_observability::ComponentHealthReporter::new(
+                "block_canonizer",
+            )
+            .0,
         })
         .pipe(BlockApplier {
             state: state.clone(),
             replay: block_replay_storage.clone(),
             repositories: repositories.clone(),
             config: config.into(),
+            // Temporary placeholder - Task 8 will wire this properly
+            health_reporter: zksync_os_observability::ComponentHealthReporter::new(
+                "block_applier",
+            )
+            .0,
         })
         .pipe_opt(
             config
@@ -1138,6 +1148,11 @@ async fn run_en_pipeline(
             replay: block_replay_storage.clone(),
             repositories: repositories.clone(),
             config: config.into(),
+            // Temporary placeholder - Task 8 will wire this properly
+            health_reporter: zksync_os_observability::ComponentHealthReporter::new(
+                "block_applier",
+            )
+            .0,
         })
         .pipe_opt(
             config

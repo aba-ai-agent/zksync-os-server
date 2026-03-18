@@ -14,7 +14,7 @@ use zksync_os_interface::traits::TxListSource;
 use zksync_os_interface::types::BlockOutput;
 use zksync_os_l1_sender::batcher_model::ProverInput;
 use zksync_os_merkle_tree::{MerkleTreeVersion, RocksDBWrapper, fixed_bytes_to_bytes32};
-use zksync_os_observability::{ComponentStateReporter, GenericComponentState};
+use zksync_os_observability::{ComponentHealthReporter, GenericComponentState};
 use zksync_os_pipeline::{PeekableReceiver, PipelineComponent};
 use zksync_os_storage_api::{ReadStateHistory, ReplayRecord};
 use zksync_os_types::{ProvingVersion, PubdataMode, ZksyncOsEncode};
@@ -45,10 +45,8 @@ impl<ReadState: ReadStateHistory + Clone + Send + 'static> PipelineComponent
         input: PeekableReceiver<Self::Input>,
         output: mpsc::Sender<Self::Output>,
     ) -> Result<()> {
-        let latency_tracker = ComponentStateReporter::global().handle_for(
-            "prover_input_generator",
-            GenericComponentState::ProcessingOrWaitingRecv,
-        );
+        let (health_reporter, _rx) = ComponentHealthReporter::new("prover_input_generator");
+        health_reporter.enter_state(GenericComponentState::ProcessingOrWaitingRecv);
 
         let read_state = self.read_state;
         let pubdata_mode = self.pubdata_mode;
@@ -101,15 +99,17 @@ impl<ReadState: ReadStateHistory + Clone + Send + 'static> PipelineComponent
             .buffered(maximum_in_flight_blocks)
             .map_err(|e| anyhow::anyhow!(e))
             .try_for_each(|(block_output, replay_record, prover_input, tree)| async {
-                latency_tracker.enter_state(GenericComponentState::WaitingSend);
+                health_reporter.enter_state(GenericComponentState::WaitingSend);
+                let block_number = block_output.header.number;
                 tracing::debug!(
-                    block_number = block_output.header.number,
+                    block_number,
                     "sending block with prover input to batcher",
                 );
                 output
                     .send((block_output, replay_record, prover_input, tree))
                     .await?;
-                latency_tracker.enter_state(GenericComponentState::ProcessingOrWaitingRecv);
+                health_reporter.record_processed(block_number);
+                health_reporter.enter_state(GenericComponentState::ProcessingOrWaitingRecv);
                 Ok(())
             })
             .await?;

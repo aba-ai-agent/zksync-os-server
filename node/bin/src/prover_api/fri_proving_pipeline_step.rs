@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use zksync_os_l1_sender::batcher_model::{FriProof, ProverInput, SignedBatchEnvelope};
+use zksync_os_observability::ComponentHealthReporter;
 use zksync_os_pipeline::{PeekableReceiver, PipelineComponent};
 
 /// Pipeline step that waits for batches to be FRI proved.
@@ -36,11 +37,14 @@ impl FriProvingPipelineStep {
         let (batches_with_proof_sender, batches_with_proof_receiver) =
             mpsc::channel::<SignedBatchEnvelope<FriProof>>(5);
 
+        // Temporary placeholder - Task 8 will wire this properly
+        let (fri_health_reporter, _rx) = ComponentHealthReporter::new("fri_job_manager");
         let fri_job_manager = Arc::new(FriJobManager::new(
             batches_with_proof_sender,
             proof_storage,
             assignment_timeout,
             max_assigned_batch_range,
+            fri_health_reporter,
         ));
 
         let result = Self {

@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 use zksync_os_l1_sender::batcher_model::{FriProof, SignedBatchEnvelope};
 use zksync_os_l1_sender::commands::L1SenderCommand;
 use zksync_os_l1_sender::commands::prove::ProofCommand;
+use zksync_os_observability::ComponentHealthReporter;
 use zksync_os_pipeline::{PeekableReceiver, PipelineComponent};
 
 /// Pipeline step that waits for batches to be SNARK proved.
@@ -34,11 +35,14 @@ impl SnarkProvingPipelineStep {
     ) -> (Self, Arc<SnarkJobManager>) {
         let (proof_commands_sender, proof_commands_receiver) = mpsc::channel::<ProofCommand>(1);
 
+        // Temporary placeholder - Task 8 will wire this properly
+        let (snark_health_reporter, _rx) = ComponentHealthReporter::new("snark_job_manager");
         let snark_job_manager = Arc::new(SnarkJobManager::new(
             proof_commands_sender,
             max_fris_per_snark,
             assignment_timeout,
             max_assigned_batch_range,
+            snark_health_reporter,
         ));
 
         let result = Self {

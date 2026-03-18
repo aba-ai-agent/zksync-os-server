@@ -723,3 +723,173 @@ async fn backpressure_stops_and_resumes_transaction_acceptance() {
 | `BackpressureHandle` (branch) | Global singleton, `OnceLock` | Removed entirely |
 | Acceptance state sender | Owned by `BlockExecutor` | Owned by `PipelineHealthMonitor` |
 | New: `PipelineHealthMonitor` | — | Spawned as pipeline task; all receivers registered at wiring time; participates in the node's stop signal |
+| `run_status_server` / `AppState` | Only stop signal; returns `{ healthy }` | Extended with acceptance state + component health receivers; returns full pipeline snapshot |
+
+---
+
+## Section 5: `/status/health` Extension
+
+The existing status server at `lib/status/` already serves `GET /status/health` via axum on its own port (`StatusServerConfig.address`). Currently it returns only `{ "healthy": bool }` based on the stop signal.
+
+### `AppState` extension
+
+`AppState` gains two new fields passed in at startup wiring:
+
+```rust
+#[derive(Clone)]
+struct AppState {
+    stop_receiver: watch::Receiver<bool>,
+    /// From PipelineHealthMonitor.
+    acceptance_state: watch::Receiver<TransactionAcceptanceState>,
+    /// One entry per registered component, same set as the monitor.
+    component_health: Arc<Vec<(ComponentId, watch::Receiver<ComponentHealth>)>>,
+}
+```
+
+### Response format
+
+HTTP `200 OK` when healthy, `503 Service Unavailable` when terminating or not accepting transactions — preserving the existing semantics that load balancer probes rely on.
+
+```rust
+#[derive(Serialize)]
+struct HealthResponse {
+    healthy: bool,
+    accepting_transactions: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    backpressure_causes: Vec<BackpressureCauseJson>,
+    pipeline: PipelineSnapshot,
+}
+
+#[derive(Serialize)]
+struct PipelineSnapshot {
+    head_block: u64,
+    components: IndexMap<&'static str, ComponentSnapshot>, // ordered by pipeline position
+}
+
+#[derive(Serialize)]
+struct ComponentSnapshot {
+    state: &'static str,           // "waiting_recv" | "processing" | "waiting_send" | ...
+    state_duration_secs: f64,
+    last_processed_block: u64,
+    block_lag: u64,                // 0 when idle (WaitingRecv)
+    waiting_send_secs: f64,        // 0 when not in WaitingSend
+}
+
+#[derive(Serialize)]
+struct BackpressureCauseJson {
+    component: &'static str,
+    trigger: &'static str,         // "waiting_send_too_long" | "block_lag_too_high"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    threshold_secs: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actual_secs: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    threshold_blocks: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actual_blocks: Option<u64>,
+}
+```
+
+### Example responses
+
+**Healthy node:**
+```json
+HTTP 200
+{
+  "healthy": true,
+  "accepting_transactions": true,
+  "pipeline": {
+    "head_block": 12345,
+    "components": {
+      "block_executor":   { "state": "processing",              "state_duration_secs": 0.04, "last_processed_block": 12344, "block_lag": 0,   "waiting_send_secs": 0 },
+      "block_canonizer":  { "state": "waiting_recv",            "state_duration_secs": 0.21, "last_processed_block": 12344, "block_lag": 0,   "waiting_send_secs": 0 },
+      "fri_job_manager":  { "state": "processing_or_waiting_recv", "state_duration_secs": 1.2, "last_processed_block": 12300, "block_lag": 45, "waiting_send_secs": 0 },
+      "l1_sender_commit": { "state": "waiting_recv",            "state_duration_secs": 0.8,  "last_processed_block": 12290, "block_lag": 0,   "waiting_send_secs": 0 }
+    }
+  }
+}
+```
+
+**Node under backpressure:**
+```json
+HTTP 503
+{
+  "healthy": false,
+  "accepting_transactions": false,
+  "backpressure_causes": [
+    { "component": "fri_job_manager", "trigger": "block_lag_too_high", "threshold_blocks": 500, "actual_blocks": 782 },
+    { "component": "l1_sender_commit", "trigger": "waiting_send_too_long", "threshold_secs": 3600, "actual_secs": 4215 }
+  ],
+  "pipeline": {
+    "head_block": 15000,
+    "components": {
+      "block_executor":   { "state": "waiting_send",  "state_duration_secs": 12.3, "last_processed_block": 15000, "block_lag": 0,   "waiting_send_secs": 12.3 },
+      "fri_job_manager":  { "state": "processing_or_waiting_recv", "state_duration_secs": 900.1, "last_processed_block": 14218, "block_lag": 782, "waiting_send_secs": 0 },
+      "l1_sender_commit": { "state": "waiting_send",  "state_duration_secs": 4215, "last_processed_block": 14880, "block_lag": 120, "waiting_send_secs": 4215 }
+    }
+  }
+}
+```
+
+### Handler
+
+```rust
+pub(crate) async fn health(
+    state: axum::extract::State<AppState>,
+) -> (StatusCode, Json<HealthResponse>) {
+    let is_terminating = *state.stop_receiver.borrow();
+    let acceptance = state.acceptance_state.borrow().clone();
+    let accepting = matches!(acceptance, TransactionAcceptanceState::Accepting);
+
+    let head_block = state.component_health
+        .iter()
+        .find(|(id, _)| *id == ComponentId::BlockExecutor)
+        .map(|(_, rx)| rx.borrow().last_processed_seq)
+        .unwrap_or(0);
+
+    let components = state.component_health
+        .iter()
+        .map(|(id, rx)| {
+            let h = rx.borrow();
+            let elapsed = h.state_entered_at.elapsed().as_secs_f64();
+            let lag = head_block.saturating_sub(h.last_processed_seq);
+            let waiting_send_secs = if h.state == GenericComponentState::WaitingSend {
+                elapsed
+            } else {
+                0.0
+            };
+            (id.as_str(), ComponentSnapshot {
+                state: h.state.as_str(),
+                state_duration_secs: elapsed,
+                last_processed_block: h.last_processed_seq,
+                block_lag: if h.state == GenericComponentState::WaitingSend || id.is_reactive() { lag } else { 0 },
+                waiting_send_secs,
+            })
+        })
+        .collect();
+
+    let backpressure_causes = match &acceptance {
+        TransactionAcceptanceState::NotAccepting(
+            NotAcceptingReason::PipelineBackpressure { causes }
+        ) => causes.iter().map(BackpressureCauseJson::from).collect(),
+        _ => vec![],
+    };
+
+    let healthy = !is_terminating && accepting;
+    let status = if healthy { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
+
+    (status, Json(HealthResponse {
+        healthy,
+        accepting_transactions: accepting,
+        backpressure_causes,
+        pipeline: PipelineSnapshot { head_block, components },
+    }))
+}
+```
+
+### What changes in `lib/status/`
+
+- `AppState` gains `acceptance_state` and `component_health` fields
+- `run_status_server` signature gains those two parameters
+- `health.rs` replaced with the handler above
+- No new routes, no new ports, no new config

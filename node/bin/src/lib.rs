@@ -806,7 +806,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         });
     }
 
-    let pipeline_acceptance_rx = if node_role.is_main() {
+    let (pipeline_acceptance_rx, component_health) = if node_role.is_main() {
         // Main Node
         run_main_node_pipeline(
             &config,
@@ -864,6 +864,8 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
             run_status_server(
                 config.status_server_config.address.clone(),
                 stop_receiver.clone(),
+                combined_acceptance_rx.clone(),
+                component_health.clone(),
             )
             .map(report_exit("Status server")),
         );
@@ -917,7 +919,7 @@ async fn run_main_node_pipeline(
     canonization_engine: BlockCanonizationEngine,
     leadership: LeadershipSignal,
     stop_receiver: watch::Receiver<bool>,
-) -> watch::Receiver<TransactionAcceptanceState> {
+) -> (watch::Receiver<TransactionAcceptanceState>, Arc<Vec<(ComponentId, watch::Receiver<ComponentHealth>)>>) {
     let pubdata_mode = config
         .l1_sender_config
         .pubdata_mode
@@ -1006,7 +1008,7 @@ async fn run_main_node_pipeline(
         make_reporter(&mut pipeline_monitor, ComponentId::L1SenderExecute, "l1_sender_execute");
     health_entries.push((ComponentId::L1SenderExecute, l1_sender_execute_rx));
 
-    let _component_health = Arc::new(health_entries);
+    let component_health = Arc::new(health_entries);
 
     // Spawn the monitor task
     tasks.spawn(async move { pipeline_monitor.run().await });
@@ -1193,7 +1195,7 @@ async fn run_main_node_pipeline(
 
     tracing::info!("Launching pipeline");
     pipeline.spawn(tasks);
-    pipeline_acceptance_rx
+    (pipeline_acceptance_rx, component_health)
 }
 
 /// Only for EN - we still populate channels destined for the batcher subsystem -
@@ -1214,7 +1216,7 @@ async fn run_en_pipeline(
     stop_receiver: watch::Receiver<bool>,
     tx_acceptance_state_sender: watch::Sender<TransactionAcceptanceState>,
     chain_id: u64,
-) -> watch::Receiver<TransactionAcceptanceState> {
+) -> (watch::Receiver<TransactionAcceptanceState>, Arc<Vec<(ComponentId, watch::Receiver<ComponentHealth>)>>) {
     let internal_config_manager = init_and_report_internal_config_manager(
         config
             .general_config
@@ -1238,7 +1240,7 @@ async fn run_en_pipeline(
         make_reporter(&mut pipeline_monitor, ComponentId::TreeManager, "tree_manager");
     health_entries.push((ComponentId::TreeManager, tree_manager_rx));
 
-    let _component_health = Arc::new(health_entries);
+    let component_health = Arc::new(health_entries);
 
     // Spawn the monitor task
     tasks.spawn(async move { pipeline_monitor.run().await });
@@ -1322,7 +1324,7 @@ async fn run_en_pipeline(
         clear_failing_block_config_task(finality, internal_config_manager)
             .map(report_exit("clear_failing_block_config_task")),
     );
-    pipeline_acceptance_rx
+    (pipeline_acceptance_rx, component_health)
 }
 
 fn block_hashes_for_first_block(repositories: &dyn ReadRepository) -> BlockHashes {

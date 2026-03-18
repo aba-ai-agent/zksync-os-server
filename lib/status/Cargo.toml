@@ -15,3 +15,6 @@ tokio.workspace = true
 serde.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
+zksync_os_pipeline_health = { path = "../pipeline_health" }
+zksync_os_types = { path = "../types" }
+zksync_os_observability = { path = "../observability" }

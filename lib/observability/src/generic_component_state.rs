@@ -21,4 +21,13 @@ impl GenericComponentState {
             GenericComponentState::ProcessingOrWaitingRecv => "processing_or_waiting_recv",
         }
     }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::WaitingRecv => "waiting_recv",
+            Self::Processing => "processing",
+            Self::WaitingSend => "waiting_send",
+            Self::ProcessingOrWaitingRecv => "processing_or_waiting_recv",
+        }
+    }
 }

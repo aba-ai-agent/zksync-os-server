@@ -941,6 +941,11 @@ async fn run_main_node_pipeline(
             state: state.clone(),
             config: config.into(),
             tx_acceptance_state_sender,
+            // Temporary - will be replaced in Task 8 (wiring)
+            health_reporter: zksync_os_observability::ComponentHealthReporter::new(
+                "block_executor",
+            )
+            .0,
         })
         .pipe(BlockCanonizer {
             consensus: canonization_engine,
@@ -1122,6 +1127,11 @@ async fn run_en_pipeline(
             state: state.clone(),
             config: config.into(),
             tx_acceptance_state_sender,
+            // Temporary - will be replaced in Task 8 (wiring)
+            health_reporter: zksync_os_observability::ComponentHealthReporter::new(
+                "block_executor",
+            )
+            .0,
         })
         .pipe(BlockApplier {
             state: state.clone(),

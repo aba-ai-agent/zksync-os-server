@@ -30,6 +30,9 @@ pub use component_state_reporter::{ComponentStateHandle, ComponentStateReporter,
 mod metrics;
 pub use metrics::GENERAL_METRICS;
 
+mod component_health_reporter;
+pub use component_health_reporter::{ComponentHealth, ComponentHealthReporter};
+
 /// Internal trait used in `ObservabilityGuard::with_timeout()` to inspect action results.
 trait InspectResults {
     fn inspect_results(&self, action_name: &str);

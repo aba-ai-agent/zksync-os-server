@@ -1,3 +1,4 @@
+use smart_config::{DescribeConfig, DeserializeConfig};
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -52,54 +53,49 @@ impl ComponentId {
     }
 }
 
-#[derive(Default, Clone, Debug)]
+#[derive(DescribeConfig, DeserializeConfig, Default, Clone, Debug)]
 pub struct BackpressureCondition {
     pub max_waiting_send_duration: Option<Duration>,
     pub max_block_lag: Option<u64>,
 }
 
+#[derive(DescribeConfig, DeserializeConfig, Clone, Debug)]
+#[config(derive(Default))]
 pub struct PipelineHealthConfig {
+    #[config(default_t = Duration::from_secs(1))]
     pub eval_interval: Duration,
+    #[config(nest, default)]
     pub block_executor:           BackpressureCondition,
+    #[config(nest, default)]
     pub block_applier:            BackpressureCondition,
+    #[config(nest, default)]
     pub tree_manager:             BackpressureCondition,
+    #[config(nest, default)]
     pub block_canonizer:          BackpressureCondition,
+    #[config(nest, default)]
     pub prover_input_generator:   BackpressureCondition,
+    #[config(nest, default)]
     pub batcher:                  BackpressureCondition,
+    #[config(nest, default)]
     pub batch_verification:       BackpressureCondition,
+    #[config(nest, default)]
     pub fri_job_manager:          BackpressureCondition,
+    #[config(nest, default)]
     pub gapless_committer:        BackpressureCondition,
+    #[config(nest, default)]
     pub upgrade_gatekeeper:       BackpressureCondition,
+    #[config(nest, default)]
     pub l1_sender_commit:         BackpressureCondition,
+    #[config(nest, default)]
     pub snark_job_manager:        BackpressureCondition,
+    #[config(nest, default)]
     pub gapless_l1_proof_sender:  BackpressureCondition,
+    #[config(nest, default)]
     pub l1_sender_prove:          BackpressureCondition,
+    #[config(nest, default)]
     pub priority_tree:            BackpressureCondition,
+    #[config(nest, default)]
     pub l1_sender_execute:        BackpressureCondition,
-}
-
-impl Default for PipelineHealthConfig {
-    fn default() -> Self {
-        Self {
-            eval_interval:          Duration::from_secs(1),
-            block_executor:         BackpressureCondition::default(),
-            block_applier:          BackpressureCondition::default(),
-            tree_manager:           BackpressureCondition::default(),
-            block_canonizer:        BackpressureCondition::default(),
-            prover_input_generator: BackpressureCondition::default(),
-            batcher:                BackpressureCondition::default(),
-            batch_verification:     BackpressureCondition::default(),
-            fri_job_manager:        BackpressureCondition::default(),
-            gapless_committer:      BackpressureCondition::default(),
-            upgrade_gatekeeper:     BackpressureCondition::default(),
-            l1_sender_commit:       BackpressureCondition::default(),
-            snark_job_manager:      BackpressureCondition::default(),
-            gapless_l1_proof_sender: BackpressureCondition::default(),
-            l1_sender_prove:        BackpressureCondition::default(),
-            priority_tree:          BackpressureCondition::default(),
-            l1_sender_execute:      BackpressureCondition::default(),
-        }
-    }
 }
 
 impl PipelineHealthConfig {

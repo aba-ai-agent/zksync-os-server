@@ -23,6 +23,7 @@ use zksync_os_observability::LogFormat;
 use zksync_os_observability::opentelemetry::OpenTelemetryLevel;
 use zksync_os_operator_signer::SignerConfig;
 use zksync_os_types::{NodeRole, PubdataMode};
+use zksync_os_pipeline_health::PipelineHealthConfig;
 
 mod cli;
 mod util;
@@ -54,6 +55,7 @@ pub struct Config {
     /// External Nodes never start that component and may omit this config entirely.
     pub external_price_api_client_config: Option<ExternalPriceApiClientConfig>,
     pub fee_config: FeeConfig,
+    pub pipeline_health_config: PipelineHealthConfig,
 }
 
 impl Config {
@@ -128,6 +130,9 @@ impl Config {
         schema
             .insert(&FeeConfig::DESCRIPTION, "fee")
             .expect("Failed to insert fee config");
+        schema
+            .insert(&PipelineHealthConfig::DESCRIPTION, "pipeline_health")
+            .expect("Failed to insert pipeline_health config");
         schema
     }
 

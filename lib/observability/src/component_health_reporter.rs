@@ -1,5 +1,4 @@
 use crate::generic_component_state::GenericComponentState;
-use crate::StateLabel;
 use tokio::{sync::watch, time::Instant};
 
 /// Health snapshot reported by a pipeline component on every state transition.
@@ -12,7 +11,6 @@ pub struct ComponentHealth {
     pub last_processed_seq: u64,
 }
 
-/// Replaces `ComponentStateReporter`.
 /// Uses `watch::Sender` — updates are infallible, no background task, no global state.
 #[derive(Debug)]
 pub struct ComponentHealthReporter {
@@ -37,7 +35,6 @@ impl ComponentHealthReporter {
         let now = Instant::now();
         self.sender.send_modify(|health| {
             let elapsed = now.duration_since(health.state_entered_at);
-            // Preserve dashboard compatibility with ComponentStateReporter metrics.
             // GENERAL_METRICS.component_time_spent_in_state uses Counter<f64> with inc_by.
             crate::metrics::GENERAL_METRICS.component_time_spent_in_state
                 [&(self.component, health.state, health.state.specific())]

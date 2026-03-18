@@ -1,7 +1,7 @@
 use crate::execution::execute_block_in_vm::SealReason;
 use std::time::Duration;
 use vise::{Buckets, Gauge, Histogram, LabeledFamily, Metrics, Unit};
-use vise::{Counter, EncodeLabelValue};
+use vise::Counter;
 
 #[derive(Debug, Metrics)]
 #[metrics(prefix = "execution")]

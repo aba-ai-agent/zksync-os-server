@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use std::cmp::Ordering;
 use tokio::sync::mpsc;
 use zksync_os_contract_interface::ZkChain;
-use zksync_os_observability::{ComponentStateReporter, GenericComponentState};
+use zksync_os_observability::{ComponentHealthReporter, GenericComponentState};
 use zksync_os_pipeline::{PeekableReceiver, PipelineComponent};
 use zksync_os_types::ProtocolSemanticVersion;
 
@@ -89,17 +89,16 @@ impl PipelineComponent for UpgradeGatekeeper {
         mut input: PeekableReceiver<Self::Input>,
         output: mpsc::Sender<Self::Output>,
     ) -> anyhow::Result<()> {
-        let latency_tracker = ComponentStateReporter::global()
-            .handle_for("upgrade_gatekeeper", GenericComponentState::WaitingRecv);
+        let (health_reporter, _rx) = ComponentHealthReporter::new("upgrade_gatekeeper");
 
         loop {
-            latency_tracker.enter_state(GenericComponentState::WaitingRecv);
+            health_reporter.enter_state(GenericComponentState::WaitingRecv);
             let Some(command) = input.recv().await else {
                 anyhow::bail!("UpgradeGatekeeper input stream ended unexpectedly");
             };
 
             if let L1SenderCommand::SendToL1(command) = &command {
-                latency_tracker.enter_state(GenericComponentState::Processing);
+                health_reporter.enter_state(GenericComponentState::Processing);
 
                 let batch_protocol_version = command.input().batch.protocol_version.clone();
 
@@ -107,7 +106,7 @@ impl PipelineComponent for UpgradeGatekeeper {
                     .await?;
             }
 
-            latency_tracker.enter_state(GenericComponentState::WaitingSend);
+            health_reporter.enter_state(GenericComponentState::WaitingSend);
             output.send(command).await?;
         }
     }

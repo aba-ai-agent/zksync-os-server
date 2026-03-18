@@ -19,7 +19,7 @@ use zksync_os_l1_sender::batcher_metrics::BatchExecutionStage;
 use zksync_os_l1_sender::batcher_model::{
     BatchForSigning, BatchSignatureData, SignedBatchEnvelope,
 };
-use zksync_os_observability::{ComponentStateReporter, GenericComponentState};
+use zksync_os_observability::{ComponentHealthReporter, GenericComponentState};
 use zksync_os_pipeline::{PeekableReceiver, PipelineComponent};
 
 fn report_exit<T, E: std::fmt::Debug>(name: &'static str) -> impl Fn(Result<T, E>) {
@@ -139,18 +139,15 @@ async fn run_batch_response_processor(
     mut response_receiver: mpsc::Receiver<BatchVerificationResponse>,
     response_channels: ResponseChannelsMapArc,
 ) -> anyhow::Result<()> {
-    let latency_tracker = ComponentStateReporter::global().handle_for(
-        "batch_response_processor",
-        GenericComponentState::WaitingRecv,
-    );
+    let (health_reporter, _rx) = ComponentHealthReporter::new("batch_response_processor");
     while let Some(response) = response_receiver.recv().await {
-        latency_tracker.enter_state(GenericComponentState::Processing);
+        health_reporter.enter_state(GenericComponentState::Processing);
         let request_id = response.request_id;
 
         // Route response to the appropriate channel
         if let Some(sender) = response_channels.read().await.get(&request_id) {
             tracing::debug!(request_id, "Received batch verification response");
-            latency_tracker.enter_state(GenericComponentState::WaitingSend);
+            health_reporter.enter_state(GenericComponentState::WaitingSend);
             if let Err(e) = sender.send(response).await {
                 tracing::warn!(request_id, ?e, "Failed to route response");
             }
@@ -158,7 +155,7 @@ async fn run_batch_response_processor(
             // debug, because probably we finished processing this batch and this is an extra response
             tracing::debug!(request_id, "Response for unknown request_id, dropping");
         }
-        latency_tracker.enter_state(GenericComponentState::WaitingRecv);
+        health_reporter.enter_state(GenericComponentState::WaitingRecv);
     }
 
     tracing::info!("Batch response processor shutting down");
@@ -243,12 +240,11 @@ impl BatchVerifier {
         mut batch_for_signing_receiver: PeekableReceiver<BatchForSigning<E>>,
         singed_batcher_sender: Sender<SignedBatchEnvelope<E>>,
     ) -> anyhow::Result<()> {
-        let latency_tracker = ComponentStateReporter::global()
-            .handle_for("batch_verifier", GenericComponentState::WaitingRecv);
+        let (health_reporter, _rx) = ComponentHealthReporter::new("batch_verifier");
         let metrics = &*BATCH_VERIFICATION_SEQUENCER_METRICS;
 
         loop {
-            latency_tracker.enter_state(GenericComponentState::WaitingRecv);
+            health_reporter.enter_state(GenericComponentState::WaitingRecv);
             // We process the batches one by one. Consider adding concurrency here when we need it.
             let Some(batch_envelope) = batch_for_signing_receiver.recv().await else {
                 // Channel closed, exit the loop
@@ -273,7 +269,7 @@ impl BatchVerifier {
                 continue;
             }
 
-            latency_tracker.enter_state(GenericComponentState::Processing);
+            health_reporter.enter_state(GenericComponentState::Processing);
             let batch_envelope = batch_envelope.with_stage(BatchExecutionStage::SigningStarted);
             metrics.last_batch_number.set(batch_envelope.batch_number());
 
@@ -315,7 +311,8 @@ impl BatchVerifier {
             metrics.attempts_to_success.observe(retry_count + 1);
             metrics.total_latency.observe(start_time.elapsed());
 
-            latency_tracker.enter_state(GenericComponentState::WaitingSend);
+            let last_block = batch_envelope.batch.last_block_number;
+            health_reporter.enter_state(GenericComponentState::WaitingSend);
             singed_batcher_sender
                 .send(
                     batch_envelope
@@ -324,6 +321,7 @@ impl BatchVerifier {
                 )
                 .await
                 .map_err(|_| anyhow::anyhow!("Failed to send signed batch envelope"))?;
+            health_reporter.record_processed(last_block);
         }
     }
 

@@ -50,7 +50,6 @@ This distinction is documented per-component in `PipelineHealthConfig` and is no
 
 ```
 BlockExecutor  ──watch::Sender<ComponentHealth>──┐
-               ──watch::Sender<bool>─────────────┤  (block_production_disabled only)
 BlockCanonizer ──watch::Sender<ComponentHealth>──┤
 BlockApplier   ──watch::Sender<ComponentHealth>──┤
 TreeManager    ──watch::Sender<ComponentHealth>──┤
@@ -66,11 +65,11 @@ L1Sender(Exec) ──watch::Sender<ComponentHealth>──┘         │
                                                                   pipeline_component_waiting_send_seconds{component}
 ```
 
-Every pipeline component holds a `ComponentHealthReporter` and hands its `watch::Receiver<ComponentHealth>` to the monitor at wiring time.
-
-`BlockExecutor` is the one exception: it additionally holds a `watch::Sender<bool>` for `block_production_disabled`, signalling when `max_blocks_to_produce` is reached. This is a deliberate config limit, not a health condition, and does not fit into `GenericComponentState`. All other components have only a `ComponentHealthReporter`.
+Every pipeline component — including `BlockExecutor` — holds only a `ComponentHealthReporter` and hands its `watch::Receiver<ComponentHealth>` to the monitor at wiring time. No component is special-cased.
 
 The monitor is the sole writer to `watch::Sender<TransactionAcceptanceState>`. No component writes to the acceptance state channel directly.
+
+`max_blocks_to_produce` is expressed as a condition in `PipelineHealthConfig` rather than as a halt in `BlockExecutor`. The `check_block_production_limit` call and the corresponding `watch::Sender<TransactionAcceptanceState>` are removed from `BlockExecutor` entirely.
 
 ---
 
@@ -191,6 +190,12 @@ pub struct PipelineHealthConfig {
     /// How often the monitor re-evaluates all conditions.
     pub eval_interval: Duration,
 
+    /// When set, stop accepting transactions once BlockExecutor has processed
+    /// this many blocks. Replaces the check_block_production_limit halt that
+    /// previously lived inside BlockExecutor. BlockExecutor continues running
+    /// (producing empty blocks) but no user transactions are accepted.
+    pub max_blocks_to_produce: Option<u64>,
+
     // Both pipelines
     pub block_executor:           BackpressureCondition,
     pub block_applier:            BackpressureCondition,
@@ -216,6 +221,7 @@ impl Default for PipelineHealthConfig {
     fn default() -> Self {
         Self {
             eval_interval: Duration::from_secs(1), // explicit: Duration::default() is zero
+            max_blocks_to_produce: None,
             block_executor:           BackpressureCondition::default(),
             block_applier:            BackpressureCondition::default(),
             // ... all fields BackpressureCondition::default()
@@ -338,29 +344,18 @@ pub struct PipelineHealthMonitor {
     config: PipelineHealthConfig,
     components: Vec<(ComponentId, watch::Receiver<ComponentHealth>)>,
     acceptance_tx: watch::Sender<TransactionAcceptanceState>,
-    /// Signalled by BlockExecutor when max_blocks_to_produce is reached.
-    /// BlockExecutor is the only component with this additional output — it is a
-    /// deliberate operator limit, not a health condition.
-    block_production_disabled_rx: watch::Receiver<bool>,
     stop_receiver: watch::Receiver<bool>,
 }
 
 impl PipelineHealthMonitor {
     pub fn new(
         config: PipelineHealthConfig,
-        block_production_disabled_rx: watch::Receiver<bool>,
         stop_receiver: watch::Receiver<bool>,
     ) -> (Self, watch::Receiver<TransactionAcceptanceState>) {
         let (acceptance_tx, acceptance_rx) =
             watch::channel(TransactionAcceptanceState::Accepting);
         (
-            Self {
-                config,
-                components: vec![],
-                acceptance_tx,
-                block_production_disabled_rx,
-                stop_receiver,
-            },
+            Self { config, components: vec![], acceptance_tx, stop_receiver },
             acceptance_rx,
         )
     }
@@ -430,13 +425,16 @@ fn evaluate_and_update(&self) {
 fn compute_acceptance_state(
     &self,
     active_causes: Vec<BackpressureCause>,
-    _head_seq: u64,
+    head_seq: u64,
 ) -> TransactionAcceptanceState {
-    // Block production limit takes precedence over backpressure causes.
-    if *self.block_production_disabled_rx.borrow() {
-        return TransactionAcceptanceState::NotAccepting(
-            NotAcceptingReason::BlockProductionDisabled,
-        );
+    // Block production limit takes precedence over per-component backpressure.
+    // Evaluated directly from BlockExecutor's last_processed_seq — no separate channel needed.
+    if let Some(limit) = self.config.max_blocks_to_produce {
+        if head_seq >= limit {
+            return TransactionAcceptanceState::NotAccepting(
+                NotAcceptingReason::BlockProductionDisabled,
+            );
+        }
     }
     if active_causes.is_empty() {
         TransactionAcceptanceState::Accepting
@@ -592,7 +590,7 @@ async fn send_raw_transaction_impl(&self, tx: Bytes) -> Result<H256, EthSendRawT
 }
 ```
 
-`BlockExecutor` no longer holds a `watch::Sender<TransactionAcceptanceState>`. It holds a `ComponentHealthReporter` (like every component) plus a `watch::Sender<bool>` for `block_production_disabled`, which it sets to `true` when `max_blocks_to_produce` is reached. The monitor reads the `bool` receiver and sets `NotAccepting(BlockProductionDisabled)` accordingly.
+`BlockExecutor` no longer holds a `watch::Sender<TransactionAcceptanceState>` or any other special channel. It holds only a `ComponentHealthReporter`, the same as every other component. The `check_block_production_limit` halt is removed from `BlockExecutor`. The monitor evaluates `max_blocks_to_produce` directly from `block_executor.last_processed_seq`.
 
 ### Error format
 
@@ -740,8 +738,8 @@ async fn backpressure_stops_and_resumes_transaction_acceptance() {
 | Component | Before | After |
 |---|---|---|
 | Each pipeline component | `ComponentStateReporter` + background task | `ComponentHealthReporter` (watch-based, no background task) |
-| `BlockExecutor` | Holds `watch::Sender<TransactionAcceptanceState>` | Holds `ComponentHealthReporter` + `watch::Sender<bool>` (block_production_disabled) |
+| `BlockExecutor` | Holds `watch::Sender<TransactionAcceptanceState>`, calls `check_block_production_limit` | Holds `ComponentHealthReporter` only — same as every other component |
 | `TxHandler` | Two sequential acceptance checks | One check, one channel |
 | `BackpressureHandle` (branch) | Global singleton, `OnceLock` | Removed entirely |
 | Acceptance state sender | Owned by `BlockExecutor` | Owned by `PipelineHealthMonitor` |
-| New: `PipelineHealthMonitor` | — | Spawned as pipeline task alongside the component pipeline; all receivers registered at wiring time; participates in the node's stop signal |
+| New: `PipelineHealthMonitor` | — | Spawned as pipeline task; all receivers registered at wiring time; evaluates `max_blocks_to_produce` from `block_executor.last_processed_seq`; participates in the node's stop signal |

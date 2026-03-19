@@ -23,8 +23,7 @@ impl PipelineHealthMonitor {
             config.eval_interval > std::time::Duration::ZERO,
             "PipelineHealthConfig::eval_interval must be > 0"
         );
-        let (acceptance_tx, acceptance_rx) =
-            watch::channel(TransactionAcceptanceState::Accepting);
+        let (acceptance_tx, acceptance_rx) = watch::channel(TransactionAcceptanceState::Accepting);
         (
             Self {
                 config,
@@ -279,9 +278,7 @@ mod tests {
             ComponentId::L1SenderCommit,
         );
         let health = make_health(GenericComponentState::WaitingSend, 20, 0);
-        let cause = m
-            .evaluate(ComponentId::L1SenderCommit, &health, 0)
-            .unwrap();
+        let cause = m.evaluate(ComponentId::L1SenderCommit, &health, 0).unwrap();
         assert_eq!(cause.component, "l1_sender_commit");
         assert!(matches!(
             cause.trigger,
@@ -390,21 +387,21 @@ mod tests {
     async fn two_causes_both_in_acceptance_state() {
         let (stop_tx, stop_rx) = watch::channel(false);
         std::mem::forget(stop_tx);
-        let mut config = PipelineHealthConfig::default();
-        config.fri_job_manager = BackpressureCondition {
-            max_block_lag: Some(5),
-            ..Default::default()
-        };
-        config.l1_sender_commit = BackpressureCondition {
-            max_waiting_send_duration: Some(Duration::from_secs(5)),
+        let config = PipelineHealthConfig {
+            fri_job_manager: BackpressureCondition {
+                max_block_lag: Some(5),
+                ..Default::default()
+            },
+            l1_sender_commit: BackpressureCondition {
+                max_waiting_send_duration: Some(Duration::from_secs(5)),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let (mut monitor, acceptance_rx) = PipelineHealthMonitor::new(config, stop_rx);
 
-        let (_, fri_rx) =
-            zksync_os_observability::ComponentHealthReporter::new("fri_job_manager");
-        let (_, l1_rx) =
-            zksync_os_observability::ComponentHealthReporter::new("l1_sender_commit");
+        let (_, fri_rx) = zksync_os_observability::ComponentHealthReporter::new("fri_job_manager");
+        let (_, l1_rx) = zksync_os_observability::ComponentHealthReporter::new("l1_sender_commit");
         monitor.register(ComponentId::FriJobManager, fri_rx);
         monitor.register(ComponentId::L1SenderCommit, l1_rx);
         monitor.force_health_for_test(
@@ -418,9 +415,9 @@ mod tests {
         monitor.evaluate_and_update_with_head(100);
 
         let state = acceptance_rx.borrow().clone();
-        if let TransactionAcceptanceState::NotAccepting(NotAcceptingReason::PipelineBackpressure {
-            causes,
-        }) = state
+        if let TransactionAcceptanceState::NotAccepting(
+            NotAcceptingReason::PipelineBackpressure { causes },
+        ) = state
         {
             assert_eq!(causes.len(), 2);
         } else {
@@ -432,13 +429,15 @@ mod tests {
     async fn one_cause_clears_other_remains_not_accepting() {
         let (stop_tx, stop_rx) = watch::channel(false);
         std::mem::forget(stop_tx);
-        let mut config = PipelineHealthConfig::default();
-        config.fri_job_manager = BackpressureCondition {
-            max_block_lag: Some(5),
-            ..Default::default()
-        };
-        config.l1_sender_commit = BackpressureCondition {
-            max_block_lag: Some(5),
+        let config = PipelineHealthConfig {
+            fri_job_manager: BackpressureCondition {
+                max_block_lag: Some(5),
+                ..Default::default()
+            },
+            l1_sender_commit: BackpressureCondition {
+                max_block_lag: Some(5),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let (mut monitor, acceptance_rx) = PipelineHealthMonitor::new(config, stop_rx);
@@ -453,9 +452,9 @@ mod tests {
         monitor.evaluate_and_update_with_head(100);
         assert!(matches!(
             acceptance_rx.borrow().clone(),
-            TransactionAcceptanceState::NotAccepting(NotAcceptingReason::PipelineBackpressure {
-                ..
-            })
+            TransactionAcceptanceState::NotAccepting(
+                NotAcceptingReason::PipelineBackpressure { .. }
+            )
         ));
 
         monitor.force_health_for_test(
@@ -464,9 +463,9 @@ mod tests {
         );
         monitor.evaluate_and_update_with_head(100);
         let state = acceptance_rx.borrow().clone();
-        if let TransactionAcceptanceState::NotAccepting(NotAcceptingReason::PipelineBackpressure {
-            causes,
-        }) = state
+        if let TransactionAcceptanceState::NotAccepting(
+            NotAcceptingReason::PipelineBackpressure { causes },
+        ) = state
         {
             assert_eq!(causes.len(), 1);
             assert_eq!(causes[0].component, "l1_sender_commit");
@@ -479,9 +478,11 @@ mod tests {
     async fn all_causes_clear_becomes_accepting() {
         let (stop_tx, stop_rx) = watch::channel(false);
         std::mem::forget(stop_tx);
-        let mut config = PipelineHealthConfig::default();
-        config.l1_sender_commit = BackpressureCondition {
-            max_block_lag: Some(5),
+        let config = PipelineHealthConfig {
+            l1_sender_commit: BackpressureCondition {
+                max_block_lag: Some(5),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let (mut monitor, acceptance_rx) = PipelineHealthMonitor::new(config, stop_rx);

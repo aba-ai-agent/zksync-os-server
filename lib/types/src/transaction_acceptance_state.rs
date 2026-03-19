@@ -29,7 +29,10 @@ pub struct BackpressureCause {
 #[derive(Debug, Clone, PartialEq)]
 pub enum BackpressureTrigger {
     /// A downstream send has been blocked for too long
-    WaitingSendTooLong { threshold: Duration, actual: Duration },
+    WaitingSendTooLong {
+        threshold: Duration,
+        actual: Duration,
+    },
     /// The number of unprocessed blocks exceeds the threshold
     BlockLagTooHigh { threshold: u64, actual: u64 },
 }
@@ -48,11 +51,10 @@ mod tests {
                 actual: 782,
             },
         };
-        let state = TransactionAcceptanceState::NotAccepting(
-            NotAcceptingReason::PipelineBackpressure {
+        let state =
+            TransactionAcceptanceState::NotAccepting(NotAcceptingReason::PipelineBackpressure {
                 causes: vec![cause.clone()],
-            },
-        );
+            });
         assert!(matches!(
             state,
             TransactionAcceptanceState::NotAccepting(
@@ -68,6 +70,9 @@ mod tests {
             threshold: Duration::from_secs(3600),
             actual: Duration::from_secs(4215),
         };
-        assert!(matches!(trigger, BackpressureTrigger::WaitingSendTooLong { .. }));
+        assert!(matches!(
+            trigger,
+            BackpressureTrigger::WaitingSendTooLong { .. }
+        ));
     }
 }

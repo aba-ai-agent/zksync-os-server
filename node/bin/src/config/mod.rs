@@ -22,8 +22,8 @@ use zksync_os_network::{NodeRecord, SecretKey};
 use zksync_os_observability::LogFormat;
 use zksync_os_observability::opentelemetry::OpenTelemetryLevel;
 use zksync_os_operator_signer::SignerConfig;
-use zksync_os_types::{NodeRole, PubdataMode};
 use zksync_os_pipeline_health::PipelineHealthConfig;
+use zksync_os_types::{NodeRole, PubdataMode};
 
 mod cli;
 mod util;

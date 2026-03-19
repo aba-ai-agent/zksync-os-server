@@ -7,6 +7,7 @@ use tokio::sync::watch;
 use zksync_os_internal_config::InternalConfigManager;
 use zksync_os_metadata::NODE_VERSION;
 use zksync_os_observability::prometheus::PrometheusExporterConfig;
+use zksync_os_pipeline_health::PipelineHealthConfig;
 use zksync_os_server::config::{
     BaseTokenPriceUpdaterConfig, BatchVerificationConfig, BatcherConfig, Config, ConfigArgs,
     ExternalPriceApiClientConfig, FeeConfig, GasAdjusterConfig, GeneralConfig, GenesisConfig,
@@ -15,7 +16,6 @@ use zksync_os_server::config::{
     RebuildBlocksConfig, RpcConfig, SequencerConfig, StateBackendConfig, StatusServerConfig,
     TxValidatorConfig,
 };
-use zksync_os_pipeline_health::PipelineHealthConfig;
 use zksync_os_server::default_protocol_version::{DEFAULT_ROCKS_DB_PATH, PROTOCOL_VERSION};
 use zksync_os_server::{INTERNAL_CONFIG_FILE_NAME, run};
 use zksync_os_state::StateHandle;

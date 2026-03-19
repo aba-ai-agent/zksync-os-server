@@ -102,10 +102,7 @@ impl<ReadState: ReadStateHistory + Clone + Send + 'static> PipelineComponent
             .try_for_each(|(block_output, replay_record, prover_input, tree)| async {
                 health_reporter.enter_state(GenericComponentState::WaitingSend);
                 let block_number = block_output.header.number;
-                tracing::debug!(
-                    block_number,
-                    "sending block with prover input to batcher",
-                );
+                tracing::debug!(block_number, "sending block with prover input to batcher",);
                 output
                     .send((block_output, replay_record, prover_input, tree))
                     .await?;

@@ -50,71 +50,99 @@ pub struct BackpressureCauseJson {
     pub actual_blocks: Option<u64>,
 }
 
-pub(crate) async fn health(
-    State(state): State<AppState>,
-) -> (StatusCode, Json<HealthResponse>) {
+pub(crate) async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthResponse>) {
     let is_terminating = *state.stop_receiver.borrow();
     let acceptance = state.acceptance_state.borrow().clone();
     let accepting = matches!(acceptance, TransactionAcceptanceState::Accepting);
 
-    let head_block = state.component_health
+    let head_block = state
+        .component_health
         .iter()
         .find(|(id, _)| *id == ComponentId::BlockExecutor)
         .map(|(_, rx)| rx.borrow().last_processed_seq)
         .unwrap_or(0);
 
     let now = tokio::time::Instant::now();
-    let components: Vec<ComponentEntry> = state.component_health.iter().map(|(id, rx)| {
-        let h = rx.borrow();
-        let elapsed = now.duration_since(h.state_entered_at).as_secs_f64();
-        let lag = head_block.saturating_sub(h.last_processed_seq);
-        let waiting_send_secs = if h.state == GenericComponentState::WaitingSend { elapsed } else { 0.0 };
-        let block_lag = if id.is_reactive() || h.state == GenericComponentState::WaitingSend { lag } else { 0 };
-        ComponentEntry {
-            name: id.as_str(),
-            snapshot: ComponentSnapshot {
-                state: h.state.as_str(),
-                state_duration_secs: elapsed,
-                last_processed_block: h.last_processed_seq,
-                block_lag,
-                waiting_send_secs,
-            },
-        }
-    }).collect();
+    let components: Vec<ComponentEntry> = state
+        .component_health
+        .iter()
+        .map(|(id, rx)| {
+            let h = rx.borrow();
+            let elapsed = now.duration_since(h.state_entered_at).as_secs_f64();
+            let lag = head_block.saturating_sub(h.last_processed_seq);
+            let waiting_send_secs = if h.state == GenericComponentState::WaitingSend {
+                elapsed
+            } else {
+                0.0
+            };
+            let block_lag = if id.is_reactive() || h.state == GenericComponentState::WaitingSend {
+                lag
+            } else {
+                0
+            };
+            ComponentEntry {
+                name: id.as_str(),
+                snapshot: ComponentSnapshot {
+                    state: h.state.as_str(),
+                    state_duration_secs: elapsed,
+                    last_processed_block: h.last_processed_seq,
+                    block_lag,
+                    waiting_send_secs,
+                },
+            }
+        })
+        .collect();
 
     let backpressure_causes = match &acceptance {
-        TransactionAcceptanceState::NotAccepting(
-            NotAcceptingReason::PipelineBackpressure { causes }
-        ) => causes.iter().map(|c| match &c.trigger {
-            BackpressureTrigger::WaitingSendTooLong { threshold, actual } => BackpressureCauseJson {
-                component: c.component,
-                trigger: "waiting_send_too_long",
-                threshold_secs: Some(threshold.as_secs_f64()),
-                actual_secs: Some(actual.as_secs_f64()),
-                threshold_blocks: None,
-                actual_blocks: None,
-            },
-            BackpressureTrigger::BlockLagTooHigh { threshold, actual } => BackpressureCauseJson {
-                component: c.component,
-                trigger: "block_lag_too_high",
-                threshold_secs: None,
-                actual_secs: None,
-                threshold_blocks: Some(*threshold),
-                actual_blocks: Some(*actual),
-            },
-        }).collect(),
+        TransactionAcceptanceState::NotAccepting(NotAcceptingReason::PipelineBackpressure {
+            causes,
+        }) => causes
+            .iter()
+            .map(|c| match &c.trigger {
+                BackpressureTrigger::WaitingSendTooLong { threshold, actual } => {
+                    BackpressureCauseJson {
+                        component: c.component,
+                        trigger: "waiting_send_too_long",
+                        threshold_secs: Some(threshold.as_secs_f64()),
+                        actual_secs: Some(actual.as_secs_f64()),
+                        threshold_blocks: None,
+                        actual_blocks: None,
+                    }
+                }
+                BackpressureTrigger::BlockLagTooHigh { threshold, actual } => {
+                    BackpressureCauseJson {
+                        component: c.component,
+                        trigger: "block_lag_too_high",
+                        threshold_secs: None,
+                        actual_secs: None,
+                        threshold_blocks: Some(*threshold),
+                        actual_blocks: Some(*actual),
+                    }
+                }
+            })
+            .collect(),
         _ => vec![],
     };
 
     let healthy = !is_terminating && accepting;
-    let status = if healthy { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
+    let status = if healthy {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
 
-    (status, Json(HealthResponse {
-        healthy,
-        accepting_transactions: accepting,
-        backpressure_causes,
-        pipeline: PipelineSnapshot { head_block, components },
-    }))
+    (
+        status,
+        Json(HealthResponse {
+            healthy,
+            accepting_transactions: accepting,
+            backpressure_causes,
+            pipeline: PipelineSnapshot {
+                head_block,
+                components,
+            },
+        }),
+    )
 }
 
 #[cfg(test)]
@@ -167,10 +195,15 @@ mod tests {
         let mut state = make_state();
         let cause = BackpressureCause {
             component: "fri_job_manager",
-            trigger: BackpressureTrigger::BlockLagTooHigh { threshold: 500, actual: 782 },
+            trigger: BackpressureTrigger::BlockLagTooHigh {
+                threshold: 500,
+                actual: 782,
+            },
         };
         let (_tx, rx) = watch::channel(TransactionAcceptanceState::NotAccepting(
-            NotAcceptingReason::PipelineBackpressure { causes: vec![cause] },
+            NotAcceptingReason::PipelineBackpressure {
+                causes: vec![cause],
+            },
         ));
         state.acceptance_state = rx;
         let (status, Json(body)) = health(State(state)).await;

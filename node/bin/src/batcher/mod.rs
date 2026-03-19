@@ -110,14 +110,16 @@ impl<ReadState: ReadStateHistory + Clone + Send + 'static> PipelineComponent
         let mut last_created_batch_at: Option<Instant> = None;
 
         loop {
-            self.health_reporter.enter_state(GenericComponentState::WaitingRecv);
+            self.health_reporter
+                .enter_state(GenericComponentState::WaitingRecv);
 
             // Peek at the next block to decide whether to recreate or create anew.
             let next_block_number = input
                 .peek_recv(|(_, replay_record, _, _)| replay_record.block_context.block_number)
                 .await
                 .context("batcher inbound channel unexpectedly closed")?;
-            self.health_reporter.enter_state(GenericComponentState::Processing);
+            self.health_reporter
+                .enter_state(GenericComponentState::Processing);
 
             let batch_envelope;
             let recreated;
@@ -140,17 +142,11 @@ impl<ReadState: ReadStateHistory + Clone + Send + 'static> PipelineComponent
                 );
 
                 batch_envelope = self
-                    .recreate_existing_batch(
-                        &mut input,
-                        &prev_batch_info,
-                        committed_batch,
-                    )
+                    .recreate_existing_batch(&mut input, &prev_batch_info, committed_batch)
                     .await?;
                 recreated = true;
             } else {
-                batch_envelope = self
-                    .create_batch(&mut input, &prev_batch_info)
-                    .await?;
+                batch_envelope = self.create_batch(&mut input, &prev_batch_info).await?;
                 recreated = false;
             };
 
@@ -190,7 +186,8 @@ impl<ReadState: ReadStateHistory + Clone + Send + 'static> PipelineComponent
                 "Batch da_input",
             );
 
-            self.health_reporter.enter_state(GenericComponentState::WaitingSend);
+            self.health_reporter
+                .enter_state(GenericComponentState::WaitingSend);
             if let Some(sidecar) = batch_envelope.batch.batch_info.blob_sidecar.clone() {
                 self.sidecar_sender
                     .send(sidecar)
@@ -231,7 +228,8 @@ impl<ReadState: ReadStateHistory + Clone + Send + 'static> Batcher<ReadState> {
         );
 
         loop {
-            self.health_reporter.enter_state(GenericComponentState::WaitingRecv);
+            self.health_reporter
+                .enter_state(GenericComponentState::WaitingRecv);
             tokio::select! {
                 /* ---------- check for timeout ---------- */
                 _ = async {
@@ -354,12 +352,14 @@ impl<ReadState: ReadStateHistory + Clone + Send + 'static> Batcher<ReadState> {
         let expected_block_count = existing_batch.block_count();
         // Collect all blocks in this batch
         while blocks.len() < expected_block_count as usize {
-            self.health_reporter.enter_state(GenericComponentState::WaitingRecv);
+            self.health_reporter
+                .enter_state(GenericComponentState::WaitingRecv);
             let (block_output, replay_record, prover_input, tree) = block_receiver
                 .recv()
                 .await
                 .context("channel closed while recreating batch")?;
-            self.health_reporter.enter_state(GenericComponentState::Processing);
+            self.health_reporter
+                .enter_state(GenericComponentState::Processing);
 
             let (root_hash, leaf_count) = tree.block_end.root_info()?;
             let tree_output = TreeBatchOutput {

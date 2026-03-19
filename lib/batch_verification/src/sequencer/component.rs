@@ -126,7 +126,9 @@ impl<E: Send + Sync + 'static> PipelineComponent for BatchVerificationPipelineSt
                 _phantom,
             } = self;
 
-            BATCH_VERIFICATION_SEQUENCER_METRICS.threshold.set(threshold);
+            BATCH_VERIFICATION_SEQUENCER_METRICS
+                .threshold
+                .set(threshold);
             BATCH_VERIFICATION_SEQUENCER_METRICS
                 .validators_count
                 .set(validators.len());

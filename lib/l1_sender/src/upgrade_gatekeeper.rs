@@ -18,10 +18,15 @@ pub struct UpgradeGatekeeper {
 }
 
 impl UpgradeGatekeeper {
-    pub fn new(zk_chain_sl: ZkChain<DynProvider>, health_reporter: ComponentHealthReporter) -> Self {
-        Self { zk_chain_sl, health_reporter }
+    pub fn new(
+        zk_chain_sl: ZkChain<DynProvider>,
+        health_reporter: ComponentHealthReporter,
+    ) -> Self {
+        Self {
+            zk_chain_sl,
+            health_reporter,
+        }
     }
-
 }
 
 async fn current_protocol_version(

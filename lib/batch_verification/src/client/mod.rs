@@ -294,7 +294,6 @@ impl<Finality: ReadFinality, ReadState: ReadStateHistory>
     }
 }
 
-
 #[async_trait]
 impl<Finality: ReadFinality, ReadState: ReadStateHistory> PipelineComponent
     for BatchVerificationClient<Finality, ReadState>

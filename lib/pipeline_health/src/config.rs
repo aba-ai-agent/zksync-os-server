@@ -27,22 +27,22 @@ pub enum ComponentId {
 impl ComponentId {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::BlockExecutor        => "block_executor",
-            Self::BlockApplier         => "block_applier",
-            Self::TreeManager          => "tree_manager",
-            Self::BlockCanonizer       => "block_canonizer",
+            Self::BlockExecutor => "block_executor",
+            Self::BlockApplier => "block_applier",
+            Self::TreeManager => "tree_manager",
+            Self::BlockCanonizer => "block_canonizer",
             Self::ProverInputGenerator => "prover_input_generator",
-            Self::Batcher              => "batcher",
-            Self::BatchVerification    => "batch_verification",
-            Self::FriJobManager        => "fri_job_manager",
-            Self::GaplessCommitter     => "gapless_committer",
-            Self::UpgradeGatekeeper    => "upgrade_gatekeeper",
-            Self::L1SenderCommit       => "l1_sender_commit",
-            Self::SnarkJobManager      => "snark_job_manager",
+            Self::Batcher => "batcher",
+            Self::BatchVerification => "batch_verification",
+            Self::FriJobManager => "fri_job_manager",
+            Self::GaplessCommitter => "gapless_committer",
+            Self::UpgradeGatekeeper => "upgrade_gatekeeper",
+            Self::L1SenderCommit => "l1_sender_commit",
+            Self::SnarkJobManager => "snark_job_manager",
             Self::GaplessL1ProofSender => "gapless_l1_proof_sender",
-            Self::L1SenderProve        => "l1_sender_prove",
-            Self::PriorityTree         => "priority_tree",
-            Self::L1SenderExecute      => "l1_sender_execute",
+            Self::L1SenderProve => "l1_sender_prove",
+            Self::PriorityTree => "priority_tree",
+            Self::L1SenderExecute => "l1_sender_execute",
         }
     }
 
@@ -65,58 +65,58 @@ pub struct PipelineHealthConfig {
     #[config(default_t = Duration::from_secs(1))]
     pub eval_interval: Duration,
     #[config(nest, default)]
-    pub block_executor:           BackpressureCondition,
+    pub block_executor: BackpressureCondition,
     #[config(nest, default)]
-    pub block_applier:            BackpressureCondition,
+    pub block_applier: BackpressureCondition,
     #[config(nest, default)]
-    pub tree_manager:             BackpressureCondition,
+    pub tree_manager: BackpressureCondition,
     #[config(nest, default)]
-    pub block_canonizer:          BackpressureCondition,
+    pub block_canonizer: BackpressureCondition,
     #[config(nest, default)]
-    pub prover_input_generator:   BackpressureCondition,
+    pub prover_input_generator: BackpressureCondition,
     #[config(nest, default)]
-    pub batcher:                  BackpressureCondition,
+    pub batcher: BackpressureCondition,
     #[config(nest, default)]
-    pub batch_verification:       BackpressureCondition,
+    pub batch_verification: BackpressureCondition,
     #[config(nest, default)]
-    pub fri_job_manager:          BackpressureCondition,
+    pub fri_job_manager: BackpressureCondition,
     #[config(nest, default)]
-    pub gapless_committer:        BackpressureCondition,
+    pub gapless_committer: BackpressureCondition,
     #[config(nest, default)]
-    pub upgrade_gatekeeper:       BackpressureCondition,
+    pub upgrade_gatekeeper: BackpressureCondition,
     #[config(nest, default)]
-    pub l1_sender_commit:         BackpressureCondition,
+    pub l1_sender_commit: BackpressureCondition,
     #[config(nest, default)]
-    pub snark_job_manager:        BackpressureCondition,
+    pub snark_job_manager: BackpressureCondition,
     #[config(nest, default)]
-    pub gapless_l1_proof_sender:  BackpressureCondition,
+    pub gapless_l1_proof_sender: BackpressureCondition,
     #[config(nest, default)]
-    pub l1_sender_prove:          BackpressureCondition,
+    pub l1_sender_prove: BackpressureCondition,
     #[config(nest, default)]
-    pub priority_tree:            BackpressureCondition,
+    pub priority_tree: BackpressureCondition,
     #[config(nest, default)]
-    pub l1_sender_execute:        BackpressureCondition,
+    pub l1_sender_execute: BackpressureCondition,
 }
 
 impl PipelineHealthConfig {
     pub fn condition_for(&self, id: ComponentId) -> &BackpressureCondition {
         match id {
-            ComponentId::BlockExecutor        => &self.block_executor,
-            ComponentId::BlockApplier         => &self.block_applier,
-            ComponentId::TreeManager          => &self.tree_manager,
-            ComponentId::BlockCanonizer       => &self.block_canonizer,
+            ComponentId::BlockExecutor => &self.block_executor,
+            ComponentId::BlockApplier => &self.block_applier,
+            ComponentId::TreeManager => &self.tree_manager,
+            ComponentId::BlockCanonizer => &self.block_canonizer,
             ComponentId::ProverInputGenerator => &self.prover_input_generator,
-            ComponentId::Batcher              => &self.batcher,
-            ComponentId::BatchVerification    => &self.batch_verification,
-            ComponentId::FriJobManager        => &self.fri_job_manager,
-            ComponentId::GaplessCommitter     => &self.gapless_committer,
-            ComponentId::UpgradeGatekeeper    => &self.upgrade_gatekeeper,
-            ComponentId::L1SenderCommit       => &self.l1_sender_commit,
-            ComponentId::SnarkJobManager      => &self.snark_job_manager,
+            ComponentId::Batcher => &self.batcher,
+            ComponentId::BatchVerification => &self.batch_verification,
+            ComponentId::FriJobManager => &self.fri_job_manager,
+            ComponentId::GaplessCommitter => &self.gapless_committer,
+            ComponentId::UpgradeGatekeeper => &self.upgrade_gatekeeper,
+            ComponentId::L1SenderCommit => &self.l1_sender_commit,
+            ComponentId::SnarkJobManager => &self.snark_job_manager,
             ComponentId::GaplessL1ProofSender => &self.gapless_l1_proof_sender,
-            ComponentId::L1SenderProve        => &self.l1_sender_prove,
-            ComponentId::PriorityTree         => &self.priority_tree,
-            ComponentId::L1SenderExecute      => &self.l1_sender_execute,
+            ComponentId::L1SenderProve => &self.l1_sender_prove,
+            ComponentId::PriorityTree => &self.priority_tree,
+            ComponentId::L1SenderExecute => &self.l1_sender_execute,
         }
     }
 }
@@ -144,10 +144,24 @@ mod tests {
     fn condition_for_all_variants() {
         let config = PipelineHealthConfig::default();
         use ComponentId::*;
-        for id in [BlockExecutor, BlockApplier, TreeManager, BlockCanonizer,
-                   ProverInputGenerator, Batcher, BatchVerification, FriJobManager,
-                   GaplessCommitter, UpgradeGatekeeper, L1SenderCommit, SnarkJobManager,
-                   GaplessL1ProofSender, L1SenderProve, PriorityTree, L1SenderExecute] {
+        for id in [
+            BlockExecutor,
+            BlockApplier,
+            TreeManager,
+            BlockCanonizer,
+            ProverInputGenerator,
+            Batcher,
+            BatchVerification,
+            FriJobManager,
+            GaplessCommitter,
+            UpgradeGatekeeper,
+            L1SenderCommit,
+            SnarkJobManager,
+            GaplessL1ProofSender,
+            L1SenderProve,
+            PriorityTree,
+            L1SenderExecute,
+        ] {
             let _ = config.condition_for(id);
         }
     }
@@ -164,6 +178,9 @@ mod tests {
     fn as_str_returns_snake_case() {
         assert_eq!(ComponentId::BlockExecutor.as_str(), "block_executor");
         assert_eq!(ComponentId::FriJobManager.as_str(), "fri_job_manager");
-        assert_eq!(ComponentId::GaplessL1ProofSender.as_str(), "gapless_l1_proof_sender");
+        assert_eq!(
+            ComponentId::GaplessL1ProofSender.as_str(),
+            "gapless_l1_proof_sender"
+        );
     }
 }

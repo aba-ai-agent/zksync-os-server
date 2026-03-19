@@ -14148,6 +14148,7 @@ dependencies = [
  "zksync_os_integration_tests_macros",
  "zksync_os_multivm",
  "zksync_os_network",
+ "zksync_os_pipeline_health",
  "zksync_os_rpc_api",
  "zksync_os_server",
  "zksync_os_state_full_diffs",
@@ -14827,6 +14828,9 @@ dependencies = [
  "serde",
  "tokio",
  "tracing",
+ "zksync_os_observability",
+ "zksync_os_pipeline_health",
+ "zksync_os_types",
 ]
 
 [[package]]

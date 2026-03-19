@@ -24,7 +24,11 @@ pub async fn run_status_server(
 ) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/status/health", get(health))
-        .with_state(AppState { stop_receiver, acceptance_state, component_health });
+        .with_state(AppState {
+            stop_receiver,
+            acceptance_state,
+            component_health,
+        });
 
     let addr: SocketAddr = bind_address.parse()?;
     let listener = TcpListener::bind(addr).await?;

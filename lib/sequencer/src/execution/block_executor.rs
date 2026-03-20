@@ -192,7 +192,9 @@ async fn check_block_production_limit(
             NotAcceptingReason::BlockProductionDisabled,
         ));
 
-        health_reporter.enter_state(GenericComponentState::Processing);
+        // WaitingRecv: component is parked (not processing). Using Processing here would
+        // be misleading — the executor is idle by design, not actively doing work.
+        health_reporter.enter_state(GenericComponentState::WaitingRecv);
         std::future::pending::<()>().await;
     }
 }

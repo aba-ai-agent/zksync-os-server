@@ -269,10 +269,13 @@ async fn process_prepending_passthrough_commands<Input: SendToL1>(
                             batch_number = batch.batch_number(),
                             "Not actually sending to L1, just passing through"
                         );
+                        // Capture before with_stage() moves batch.
+                        let last_block = batch.batch.last_block_number;
                         health_reporter.enter_state(GenericComponentState::WaitingSend);
                         outbound
                             .send((*batch).with_stage(Input::PASSTHROUGH_STAGE))
                             .await?;
+                        health_reporter.record_processed(last_block);
                     }
                 }
             }

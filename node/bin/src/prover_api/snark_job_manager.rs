@@ -210,7 +210,8 @@ impl SnarkJobManager {
     async fn send_downstream(&self, proof_command: ProofCommand) -> anyhow::Result<()> {
         self.health_reporter
             .enter_state(GenericComponentState::WaitingSend);
-        let seq = proof_command.as_ref().last().unwrap().batch_number();
+        // Use last_block_number (not batch_number): the monitor lag computation is block-based.
+        let seq = proof_command.as_ref().last().unwrap().batch.last_block_number;
         self.prove_batches_sender.send(proof_command).await?;
         self.health_reporter.record_processed(seq);
         self.health_reporter

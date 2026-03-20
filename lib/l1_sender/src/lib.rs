@@ -221,12 +221,21 @@ pub async fn run_l1_sender<Input: SendToL1>(
         );
         L1_SENDER_METRICS.balance[&command_name].set(balance.parse()?);
         L1_SENDER_METRICS.nonce[&command_name].set(nonce);
+        // Extract last_block BEFORE the send loop — command.into() moves each command.
+        // Commands are ordered; the last command's last envelope has the highest block number.
+        let last_block = completed_commands
+            .last()
+            .and_then(|cmd| cmd.as_ref().last())
+            .map(|e| e.batch.last_block_number);
         health_reporter.enter_state(GenericComponentState::WaitingSend);
         for command in completed_commands {
             for mut output_envelope in command.into() {
                 output_envelope.set_stage(Input::MINED_STAGE);
                 outbound.send(output_envelope).await?;
             }
+        }
+        if let Some(lb) = last_block {
+            health_reporter.record_processed(lb);
         }
     }
 }

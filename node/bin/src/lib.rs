@@ -1282,6 +1282,23 @@ async fn run_en_pipeline(
     );
     health_entries.push((ComponentId::TreeManager, tree_manager_rx));
 
+    // `batch_verification_client_reporter` is an `Option` so it can be created here (before the
+    // pipeline chain) and moved into `BatchVerificationClient::new` further below.
+    // It stays in scope through the entire pipeline chain construction — this is safe because
+    // Rust's ownership rules allow the `Option` to be consumed (`.unwrap()`) inside a non-async
+    // expression that is evaluated at build time, not inside a spawned task.
+    let batch_verification_client_reporter = if config.batch_verification_config.client_enabled {
+        let (reporter, rx) = make_reporter(
+            &mut pipeline_monitor,
+            ComponentId::BatchVerification,
+            "batch_verification_client",
+        );
+        health_entries.push((ComponentId::BatchVerification, rx));
+        Some(reporter)
+    } else {
+        None
+    };
+
     let component_health = Arc::new(health_entries);
 
     // Spawn the monitor task
@@ -1335,6 +1352,8 @@ async fn run_en_pipeline(
                 finality.clone(),
                 node_state_on_startup.l1_state.clone(),
                 state.clone(),
+                // Safe unwrap: reporter is Some when client_enabled = true (same condition as pipe_if above)
+                batch_verification_client_reporter.unwrap(),
             ),
             NoOpSink::new(),
         )

@@ -51,6 +51,7 @@ pub struct BatchVerificationClient<Finality, ReadState> {
     signer: PrivateKeySigner,
     block_cache: BlockCache<Finality, (BlockOutput, ReplayRecord, BlockMerkleTreeData)>,
     read_state: ReadState,
+    health_reporter: ComponentHealthReporter,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -78,6 +79,7 @@ impl<Finality: ReadFinality, ReadState: ReadStateHistory>
         finality: Finality,
         l1_state: L1State,
         read_state: ReadState,
+        health_reporter: ComponentHealthReporter,
     ) -> Self {
         let signer = PrivateKeySigner::from_str(private_key.expose_secret())
             .expect("Invalid batch verification private key");
@@ -98,13 +100,13 @@ impl<Finality: ReadFinality, ReadState: ReadStateHistory>
             signer,
             block_cache: BlockCache::new(finality),
             read_state,
+            health_reporter,
         }
     }
 
     async fn connect_and_handle(
         &mut self,
         input: &mut PeekableReceiver<VerificationInput>,
-        health_reporter: &ComponentHealthReporter,
     ) -> anyhow::Result<()> {
         // Create channel for sending request data
         let (tx, rx) = mpsc::channel::<Result<Frame<Bytes>, io::Error>>(128);
@@ -161,7 +163,7 @@ impl<Finality: ReadFinality, ReadState: ReadStateHistory>
         );
 
         loop {
-            health_reporter.enter_state(GenericComponentState::WaitingRecv);
+            self.health_reporter.enter_state(GenericComponentState::WaitingRecv);
             tokio::select! {
                 block = input.recv() => {
                     match block {
@@ -180,13 +182,14 @@ impl<Finality: ReadFinality, ReadState: ReadStateHistory>
                 server_message = reader.next() => {
                     match server_message {
                         Some(Ok(message)) => {
-                            health_reporter.enter_state(GenericComponentState::Processing);
+                            self.health_reporter.enter_state(GenericComponentState::Processing);
 
+                            let last_block = message.last_block_number;
                             let batch_number = message.batch_number;
                             let request_id = message.request_id;
                             let verification_result = self.handle_verification_request(message).await;
 
-                            health_reporter.enter_state(GenericComponentState::WaitingSend);
+                            self.health_reporter.enter_state(GenericComponentState::WaitingSend);
                             match verification_result {
                                 Ok(signature) => {
                                     tracing::info!(batch_number, request_id, address, "Approved batch verification request");
@@ -199,6 +202,7 @@ impl<Finality: ReadFinality, ReadState: ReadStateHistory>
                                     writer.send(BatchVerificationResponse { request_id, batch_number, result: BatchVerificationResult::Refused(reason.to_string()) }).await?;
                                 },
                             }
+                            self.health_reporter.record_processed(last_block);
                         }
                         Some(Err(parsing_err)) =>
                         {
@@ -309,12 +313,11 @@ impl<Finality: ReadFinality, ReadState: ReadStateHistory> PipelineComponent
         mut input: PeekableReceiver<Self::Input>,
         _output: mpsc::Sender<Self::Output>,
     ) -> anyhow::Result<()> {
-        // Did not use backon due to borrowing issues
-        let (health_reporter, _rx) = ComponentHealthReporter::new("batch_verification_client");
         // Start in WaitingRecv to represent "connecting" state
-        health_reporter.enter_state(GenericComponentState::WaitingRecv);
+        self.health_reporter
+            .enter_state(GenericComponentState::WaitingRecv);
         loop {
-            let result = self.connect_and_handle(&mut input, &health_reporter).await;
+            let result = self.connect_and_handle(&mut input).await;
 
             match result {
                 Ok(()) => {
@@ -323,7 +326,8 @@ impl<Finality: ReadFinality, ReadState: ReadStateHistory> PipelineComponent
                 }
                 Err(err) => {
                     // Back to waiting/reconnecting state
-                    health_reporter.enter_state(GenericComponentState::WaitingRecv);
+                    self.health_reporter
+                        .enter_state(GenericComponentState::WaitingRecv);
                     tracing::info!(
                         ?err,
                         "Connection to batch verification server closed. Reconnecting in 5 seconds..."

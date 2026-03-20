@@ -71,6 +71,7 @@ type VerificationInput = (BlockOutput, ReplayRecord, BlockMerkleTreeData);
 impl<Finality: ReadFinality, ReadState: ReadStateHistory>
     BatchVerificationClient<Finality, ReadState>
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         chain_id: u64,
         diamond_proxy_sl: Address,

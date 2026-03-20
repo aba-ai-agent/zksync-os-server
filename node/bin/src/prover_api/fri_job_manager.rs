@@ -200,6 +200,7 @@ impl FriJobManager {
         };
 
         // Prepare the envelope and send it downstream.
+        let last_block = removed_job.batch.last_block_number;
         let proof = RealFriProof::V2 {
             proof: proof_bytes,
             proving_execution_version: proving_version as u32,
@@ -209,6 +210,7 @@ impl FriJobManager {
             .with_stage(BatchExecutionStage::FriProvedReal);
 
         permit.send(envelope);
+        self.health_reporter.record_processed(last_block);
 
         Ok(())
     }
@@ -324,11 +326,13 @@ impl FriJobManager {
             None => return Err(SubmitError::UnknownJob(batch_number)),
         };
 
+        let last_block = assigned.batch.last_block_number;
         let envelope = assigned
             .with_data(FriProof::Fake)
             .with_stage(BatchExecutionStage::FriProvedFake);
 
         permit.send(envelope);
+        self.health_reporter.record_processed(last_block);
         Ok(())
     }
 

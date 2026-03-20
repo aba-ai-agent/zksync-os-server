@@ -50,13 +50,11 @@ impl PipelineComponent for GaplessL1ProofSender {
 
                     // Flush ready commands
                     while let Some(next_command) = buffer.remove(&next_expected_batch_number) {
-                        let last_batch = next_command.first_batch_number()
-                            + next_command.batch_count() as u64
-                            - 1;
+                        let last_block = next_command.last_block_number();
                         next_expected_batch_number += next_command.batch_count() as u64;
                         health_reporter.enter_state(GenericComponentState::WaitingSend);
                         output.send(next_command).await?;
-                        health_reporter.record_processed(last_batch);
+                        health_reporter.record_processed(last_block);
                         health_reporter.enter_state(GenericComponentState::Processing);
                     }
                 }

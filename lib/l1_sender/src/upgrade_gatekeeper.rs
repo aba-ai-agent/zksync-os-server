@@ -118,9 +118,9 @@ impl PipelineComponent for UpgradeGatekeeper {
             }
 
             health_reporter.enter_state(GenericComponentState::WaitingSend);
-            let seq = command.first_batch_number();
+            let last_block = command.last_block_number();
             output.send(command).await?;
-            health_reporter.record_processed(seq);
+            health_reporter.record_processed(last_block);
         }
     }
 }

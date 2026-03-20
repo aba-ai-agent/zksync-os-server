@@ -1,6 +1,7 @@
 use std::path::Path;
 use tokio::sync::mpsc;
 use zksync_os_l1_watcher::CommittedBatchProvider;
+use zksync_os_observability::ComponentHealthReporter;
 use zksync_os_priority_tree::PriorityTreeManager;
 use zksync_os_storage_api::{ReadFinality, ReadReplay};
 
@@ -49,10 +50,13 @@ where
         let priority_tree_manager_for_caching = self.priority_tree_manager;
 
         // Task 1: Prepare execute commands (but don't send them)
+        // The EN has no ComponentId::PriorityTree registered in its monitor,
+        // so we create a local unregistered reporter to satisfy the signature.
+        let (health_reporter, _rx) = ComponentHealthReporter::new("priority_tree_en");
         let prepare_task = tokio::spawn({
             async move {
                 priority_tree_manager_for_prepare
-                    .prepare_execute_commands(None, priority_txs_internal_sender)
+                    .prepare_execute_commands(None, priority_txs_internal_sender, health_reporter)
                     .await
             }
         });

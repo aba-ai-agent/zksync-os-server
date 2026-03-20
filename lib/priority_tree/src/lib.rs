@@ -93,9 +93,8 @@ impl<ReplayStorage: ReadReplay, Finality: ReadFinality>
         self,
         main_node_channels: Option<(InputChannel, OutputChannel)>,
         priority_ops_internal_sender: mpsc::Sender<(u64, u64, Option<usize>)>,
+        health_reporter: ComponentHealthReporter,
     ) -> anyhow::Result<()> {
-        let (health_reporter, _rx) =
-            ComponentHealthReporter::new("priority_tree_manager#prepare_execute_commands");
         let (mut proved_batch_envelopes_receiver, execute_batches_sender) =
             main_node_channels.unzip();
         let mut last_processed_batch = self.last_executed_batch_on_init;
@@ -257,6 +256,9 @@ impl<ReplayStorage: ReadReplay, Finality: ReadFinality>
                 });
             }
             drop(merkle_tree);
+            // Record progress unconditionally — both main-node and EN paths processed this batch.
+            let last_block = *batch_ranges.last().unwrap().1.end();
+            health_reporter.record_processed(last_block);
             if let Some(s) = &execute_batches_sender {
                 health_reporter.enter_state(GenericComponentState::WaitingSend);
                 s.send(L1SenderCommand::SendToL1(ExecuteCommand::new(
@@ -265,9 +267,6 @@ impl<ReplayStorage: ReadReplay, Finality: ReadFinality>
                     interop_roots,
                 )))
                 .await?;
-                // Record last block in last batch as progress indicator
-                let last_block = *batch_ranges.last().unwrap().1.end();
-                health_reporter.record_processed(last_block);
             }
             last_processed_batch = batch_ranges.last().unwrap().0;
         }

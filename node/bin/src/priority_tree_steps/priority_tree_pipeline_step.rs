@@ -23,8 +23,7 @@ use zksync_os_storage_api::{ReadFinality, ReadReplay};
 pub struct PriorityTreePipelineStep<BlockStorage, Finality> {
     priority_tree_manager: PriorityTreeManager<BlockStorage, Finality>,
     /// Registered with `PipelineHealthMonitor` externally via `make_reporter()`.
-    /// Not used internally since this component delegates to `PriorityTreeManager`.
-    #[allow(dead_code)]
+    /// Passed into `PriorityTreeManager::prepare_execute_commands` to report progress.
     pub health_reporter: ComponentHealthReporter,
 }
 
@@ -79,12 +78,17 @@ where
         // Clone what we need before moving into async blocks
         let priority_tree_manager_for_prepare = self.priority_tree_manager.clone();
         let priority_tree_manager_for_caching = self.priority_tree_manager;
+        let health_reporter = self.health_reporter;
 
         // Spawn the three tasks that make up the priority tree subsystem
         let prepare_task = tokio::spawn({
             async move {
                 priority_tree_manager_for_prepare
-                    .prepare_execute_commands(Some((input, output)), priority_txs_internal_sender)
+                    .prepare_execute_commands(
+                        Some((input, output)),
+                        priority_txs_internal_sender,
+                        health_reporter,
+                    )
                     .await
             }
         });

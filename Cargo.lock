@@ -14459,7 +14459,7 @@ dependencies = [
 
 [[package]]
 name = "zksync_os_pipeline_health"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "futures",
  "smart-config",
